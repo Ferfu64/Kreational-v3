@@ -1,0 +1,31 @@
+{
+  "entities": {
+    "games": {
+      "title": "string",
+      "tier": "string",
+      "embedCode": "string",
+      "order": "number"
+    },
+    "tiers": {
+      "id": "string",
+      "name": "string",
+      "displayOrder": "number"
+    },
+    "users": {
+      "username": "string",
+      "passwordHash": "string",
+      "purchasedTiers": "array",
+      "temporaryAccess": "array"
+    },
+    "requests": {
+      "userId": "string",
+      "type": "string",
+      "targetId": "string",
+      "tierId": "string",
+      "status": "string",
+      "createdAt": "number",
+      "resolvedAt": "number",
+      "durationSeconds": "number"
+    }
+  }
+}

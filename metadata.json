@@ -1,0 +1,6 @@
+{
+  "name": "Kreational",
+  "description": "Kreational - Tiered game hub with admin-controlled accounts and access requests",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -14,8 +14,6 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
 
 // Phonetic Dictionary for accurate pronunciation
 export const VOICE_DICTIONARY: Record<string, string> = {
-  Kreational: 'Creation - al',
-  kreational: 'creation - al',
   Kreator: 'Creator',
   kreator: 'creator',
 };
@@ -25,9 +23,24 @@ const STORAGE_KEY_RATE = 'kreational_assistant_voice_rate';
 const STORAGE_KEY_PITCH = 'kreational_assistant_voice_pitch';
 const STORAGE_KEY_VOLUME = 'kreational_assistant_voice_volume';
 
+export interface SpeechQueueItem {
+  id: string;
+  text: string;
+  options?: {
+    configOverride?: Partial<VoiceConfig>;
+    onStart?: () => void;
+    onEnd?: () => void;
+    onError?: (err: any) => void;
+    interrupt?: boolean;
+  };
+}
+
 class VoiceManagerClass {
   private voices: SpeechSynthesisVoice[] = [];
   private listeners: Set<() => void> = new Set();
+  private queue: SpeechQueueItem[] = [];
+  private isProcessingQueue: boolean = false;
+  private currentUtterances: SpeechSynthesisUtterance[] = [];
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -133,7 +146,6 @@ class VoiceManagerClass {
       return allVoices.find((v) => v.default) || allVoices[0] || null;
     }
 
-    // Quality keywords for premium/natural English speech engines
     const qualityKeywords = [
       'natural',
       'google',
@@ -152,7 +164,6 @@ class VoiceManagerClass {
       if (matched) return matched;
     }
 
-    // Default English voice fallback
     const defaultEn = englishVoices.find((v) => v.default);
     if (defaultEn) return defaultEn;
 
@@ -188,7 +199,81 @@ class VoiceManagerClass {
   }
 
   /**
-   * Synthesizes speech using current or overridden voice settings & phonetic replacements.
+   * Helper to configure standard voice parameters on a SpeechSynthesisUtterance.
+   */
+  private configureUtterance(
+    utt: SpeechSynthesisUtterance,
+    config: VoiceConfig,
+    targetVoice: SpeechSynthesisVoice | null
+  ): SpeechSynthesisUtterance {
+    utt.rate = config.rate;
+    utt.pitch = config.pitch;
+    utt.volume = config.volume;
+    if (targetVoice) {
+      utt.voice = targetVoice;
+    }
+    return utt;
+  }
+
+  /**
+   * Constructs direct SpeechSynthesisUtterance sequences with a minimum delay buffer between 'Creation' and 'al'.
+   */
+  private createUtteranceSequence(
+    text: string,
+    config: VoiceConfig,
+    targetVoice: SpeechSynthesisVoice | null
+  ): SpeechSynthesisUtterance[] {
+    const kreationalRegex = /\b(Kreational|kreational|Creation-al|creation-al)\b/i;
+
+    if (!kreationalRegex.test(text)) {
+      const phoneticText = this.applyPhonetics(text);
+      const utt = new SpeechSynthesisUtterance(phoneticText);
+      this.configureUtterance(utt, config, targetVoice);
+      return [utt];
+    }
+
+    const tokens = text.split(/\b(Kreational|kreational|Creation-al|creation-al)\b/i);
+    const sequence: SpeechSynthesisUtterance[] = [];
+
+    for (const token of tokens) {
+      if (!token) continue;
+
+      if (kreationalRegex.test(token)) {
+        // Direct SpeechSynthesisUtterance sequence with zero delay buffer between 'Creation' and 'al'
+        const uCreation = new SpeechSynthesisUtterance('Creation');
+        this.configureUtterance(uCreation, config, targetVoice);
+
+        const uAl = new SpeechSynthesisUtterance('al');
+        this.configureUtterance(uAl, config, targetVoice);
+
+        sequence.push(uCreation, uAl);
+      } else {
+        const phoneticToken = this.applyPhonetics(token);
+        if (phoneticToken.trim()) {
+          const u = new SpeechSynthesisUtterance(phoneticToken);
+          this.configureUtterance(u, config, targetVoice);
+          sequence.push(u);
+        }
+      }
+    }
+
+    return sequence.length > 0 ? sequence : [this.configureUtterance(new SpeechSynthesisUtterance(text), config, targetVoice)];
+  }
+
+  /**
+   * Clears the message speech queue and stops active speech synthesis.
+   */
+  public clearQueue(): void {
+    this.queue = [];
+    this.isProcessingQueue = false;
+    this.currentUtterances = [];
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  /**
+   * Message Queue Synthesizer to handle concurrent voice instructions without collisions.
    */
   public speak(
     text: string,
@@ -197,6 +282,7 @@ class VoiceManagerClass {
       onStart?: () => void;
       onEnd?: () => void;
       onError?: (err: any) => void;
+      interrupt?: boolean;
     }
   ): void {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
@@ -204,17 +290,32 @@ class VoiceManagerClass {
       return;
     }
 
+    if (options?.interrupt) {
+      this.clearQueue();
+    }
+
+    const item: SpeechQueueItem = {
+      id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      text,
+      options,
+    };
+
+    this.queue.push(item);
+    this.processQueue();
+  }
+
+  /**
+   * Processes queued voice messages sequentially to prevent audio collisions.
+   */
+  private processQueue(): void {
+    if (this.isProcessingQueue || this.queue.length === 0) return;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    this.isProcessingQueue = true;
+    const item = this.queue.shift()!;
+
     try {
-      window.speechSynthesis.cancel();
-
-      const config = { ...this.getConfig(), ...options?.configOverride };
-      const phoneticText = this.applyPhonetics(text);
-
-      const utterance = new SpeechSynthesisUtterance(phoneticText);
-      utterance.rate = config.rate;
-      utterance.pitch = config.pitch;
-      utterance.volume = config.volume;
-
+      const config = { ...this.getConfig(), ...item.options?.configOverride };
       const allVoices = this.getVoices();
       let targetVoice: SpeechSynthesisVoice | null = null;
 
@@ -226,22 +327,88 @@ class VoiceManagerClass {
         targetVoice = this.getBestEnglishVoice(allVoices);
       }
 
-      if (targetVoice) {
-        utterance.voice = targetVoice;
+      const utterances = this.createUtteranceSequence(item.text, config, targetVoice);
+      this.currentUtterances = utterances;
+
+      if (utterances.length === 0) {
+        this.isProcessingQueue = false;
+        item.options?.onEnd?.();
+        this.processQueue();
+        return;
       }
 
-      utterance.onstart = () => options?.onStart?.();
-      utterance.onend = () => options?.onEnd?.();
-      utterance.onerror = (e) => {
-        console.warn('[VoiceManager] Speech error:', e);
-        options?.onError?.(e);
+      let started = false;
+      let completedCount = 0;
+      const totalCount = utterances.length;
+
+      const finishItem = (err?: any) => {
+        if (!this.isProcessingQueue) return;
+        this.isProcessingQueue = false;
+        this.currentUtterances = [];
+
+        if (err) {
+          item.options?.onError?.(err);
+        } else {
+          item.options?.onEnd?.();
+        }
+
+        // Trigger next message in queue with minimal delay
+        setTimeout(() => {
+          this.processQueue();
+        }, 10);
       };
 
-      window.speechSynthesis.speak(utterance);
+      // Queue all utterances in the sequence into native SpeechSynthesis
+      utterances.forEach((utt) => {
+        utt.onstart = () => {
+          if (!started) {
+            started = true;
+            item.options?.onStart?.();
+          }
+        };
+
+        utt.onend = () => {
+          completedCount++;
+          if (completedCount >= totalCount) {
+            finishItem();
+          }
+        };
+
+        utt.onerror = (e) => {
+          console.warn('[VoiceManager] Sequence utterance error:', e);
+          finishItem(e);
+        };
+
+        window.speechSynthesis.speak(utt);
+      });
     } catch (err) {
-      console.error('[VoiceManager] Failed to speak:', err);
-      options?.onError?.(err);
+      console.error('[VoiceManager] Failed to process queue item:', err);
+      this.isProcessingQueue = false;
+      item.options?.onError?.(err);
+      this.processQueue();
     }
+  }
+
+  /**
+   * Speaks with an evil/sinister sounding voice (low pitch, slower rate) for anti-language warning.
+   */
+  public speakEvil(
+    text: string,
+    options?: {
+      onStart?: () => void;
+      onEnd?: () => void;
+      onError?: (err: any) => void;
+    }
+  ): void {
+    this.speak(text, {
+      configOverride: {
+        pitch: 0.35,
+        rate: 0.85,
+        volume: 1.0,
+      },
+      ...options,
+      interrupt: true,
+    });
   }
 
   /**
@@ -259,6 +426,7 @@ class VoiceManagerClass {
         ...configOverride,
       },
       ...callbacks,
+      interrupt: true,
     });
   }
 }

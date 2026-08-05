@@ -22,6 +22,15 @@ const USERS_COLLECTION = 'users';
 const GAMES_COLLECTION = 'games';
 const REQUESTS_COLLECTION = 'requests';
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs = 3500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('Firestore timeout: backend unreachable')), timeoutMs)
+    ),
+  ]);
+}
+
 export interface UserAccountRecord {
   user: User;
   secretWord: string;
@@ -35,9 +44,9 @@ export async function ensureKreatorAdminInFirestore(): Promise<UserAccountRecord
   };
   try {
     const docRef = doc(db, USERS_COLLECTION, KREATOR_ADMIN_USER.id);
-    const snap = await getDoc(docRef);
+    const snap = await withTimeout(getDoc(docRef), 2500);
     if (!snap.exists()) {
-      await setDoc(docRef, kreatorRecord);
+      await withTimeout(setDoc(docRef, kreatorRecord), 2500);
     }
   } catch (err) {
     console.warn('Firestore ensure Kreator Admin failed:', err);
@@ -66,7 +75,7 @@ export async function authenticateAccount(
   // 2. Query Firestore users collection
   try {
     const q = query(collection(db, USERS_COLLECTION));
-    const querySnapshot = await getDocs(q);
+    const querySnapshot = await withTimeout(getDocs(q), 3000);
     let matchedDoc: UserAccountRecord | null = null;
 
     querySnapshot.forEach((docSnap) => {
@@ -127,7 +136,7 @@ export async function fetchAllUsers(): Promise<User[]> {
   userMap.set(KREATOR_ADMIN_USER.id, KREATOR_ADMIN_USER);
 
   try {
-    const querySnapshot = await getDocs(collection(db, USERS_COLLECTION));
+    const querySnapshot = await withTimeout(getDocs(collection(db, USERS_COLLECTION)), 3000);
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data() as UserAccountRecord;
       if (data && data.user) {
@@ -232,7 +241,7 @@ export async function deleteUserAccount(userId: string): Promise<void> {
 export async function fetchAllGamesStore(): Promise<Game[]> {
   let gamesFromDb: Game[] = [];
   try {
-    const querySnapshot = await getDocs(collection(db, GAMES_COLLECTION));
+    const querySnapshot = await withTimeout(getDocs(collection(db, GAMES_COLLECTION)), 3000);
     querySnapshot.forEach((docSnap) => {
       gamesFromDb.push(docSnap.data() as Game);
     });
@@ -286,7 +295,7 @@ export async function fetchAllRequestsStore(): Promise<GameRequest[]> {
   const requestMap = new Map<string, GameRequest>();
 
   try {
-    const querySnapshot = await getDocs(collection(db, REQUESTS_COLLECTION));
+    const querySnapshot = await withTimeout(getDocs(collection(db, REQUESTS_COLLECTION)), 3000);
     querySnapshot.forEach((docSnap) => {
       const req = docSnap.data() as GameRequest;
       requestMap.set(req.id, req);

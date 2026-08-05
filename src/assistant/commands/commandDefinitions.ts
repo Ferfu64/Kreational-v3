@@ -149,5 +149,37 @@ export const VOICE_COMMANDS: VoiceCommandDefinition[] = [
       return 'Request failed. You are currently not in a game.';
     },
   },
+  {
+    id: 'open_board',
+    name: 'Open board',
+    description: 'Enable non-Kreational questions (math, jokes, text help) and disable game opening',
+    phrases: [
+      'open board',
+      'open the board',
+      'board mode',
+      'enable board',
+      'enable board mode',
+      'turn on board mode',
+    ],
+    action: () => {
+      return 'Board mode is now open. Non-Kreational questions, math assistance, and jokes are enabled, and game commands are disabled. Say "close board" to exit.';
+    },
+  },
+  {
+    id: 'close_board',
+    name: 'Close board',
+    description: 'Exit board mode and restore normal Kreational Arcade game commands',
+    phrases: [
+      'close board',
+      'close the board',
+      'exit board',
+      'disable board',
+      'disable board mode',
+      'turn off board mode',
+    ],
+    action: () => {
+      return 'Board mode closed. Normal game commands and arcade controls are active again.';
+    },
+  },
 ];
 

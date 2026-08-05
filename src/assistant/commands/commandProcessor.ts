@@ -118,7 +118,22 @@ export function processVoiceCommand(
     /^(?:close|exit|quit|leave|stop playing|go back)(?:\s+(?:it|this|that|current)?\s*game)?$/i.test(cleaned);
 
   if (isCloseIntent) {
-    const isGameActive = Boolean(context.currentlyPlayingGame || ctxState.currentlyOpenGame);
+    const hasModalInDOM =
+      typeof document !== 'undefined' &&
+      Boolean(document.getElementById('game-modal-overlay') || document.getElementById('game-modal-close-button'));
+
+    const isGameActiveState = Boolean(context.currentlyPlayingGame || ctxState.currentlyOpenGame);
+    const isGameActive = isGameActiveState || hasModalInDOM;
+
+    console.log(
+      '[Kreational Assistant Game State Check] isInGame state:',
+      isGameActiveState,
+      '| DOM modal visible:',
+      hasModalInDOM,
+      '| Matches:',
+      isGameActiveState === hasModalInDOM
+    );
+
     if (!isGameActive) {
       logDebug({
         recognizedCommand: rawTranscript,
@@ -134,9 +149,18 @@ export function processVoiceCommand(
       };
     }
 
-    const res = context.closeCurrentGame
+    let res = context.closeCurrentGame
       ? context.closeCurrentGame()
       : { success: false, reason: 'Request failed. You are currently not in a game.' };
+
+    // Extra fail-safe: Click X button directly if present in DOM
+    if (typeof document !== 'undefined') {
+      const closeBtn = document.getElementById('game-modal-close-button') as HTMLButtonElement | null;
+      if (closeBtn) {
+        closeBtn.click();
+        res = { success: true, gameName: 'Current Game' };
+      }
+    }
 
     ArcadeContextManager.setCurrentlyPlayingGame(null);
     ArcadeContextManager.setLastVoiceCommand('close_game');
@@ -591,7 +615,21 @@ export function processVoiceCommand(
     }
 
     if (!['settings', 'commands', 'assistant'].includes(targetGameName) && context.openGameByName) {
-      const res = context.openGameByName(targetGameName);
+      let res = context.openGameByName(targetGameName);
+
+      // Fast fuzzy fallback match against available games list if exact target name missed
+      if (!res.success && context.games && context.games.length > 0) {
+        const cleanTarget = targetGameName.toLowerCase().trim();
+        const fuzzyGame = context.games.find(
+          (g) =>
+            g.title.toLowerCase().includes(cleanTarget) ||
+            cleanTarget.includes(g.title.toLowerCase()) ||
+            g.title.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanTarget.replace(/[^a-z0-9]/g, '')
+        );
+        if (fuzzyGame) {
+          res = context.openGameByName(fuzzyGame.title);
+        }
+      }
 
       logDebug({
         recognizedCommand: rawTranscript,
@@ -658,7 +696,30 @@ export function processVoiceCommand(
     }
   }
 
-  // 12. Predefined Static Commands (hello, capabilities, show_commands, go_home, open_settings)
+  // 12. Direct Game Title Match (If user speaks game title without 'open' or 'play' verb)
+  if (context.games && context.games.length > 0 && context.openGameByName) {
+    const directMatch = context.games.find(
+      (g) =>
+        g.title.toLowerCase() === cleaned ||
+        g.title.toLowerCase() === normalized ||
+        g.title.toLowerCase().replace(/[^a-z0-9]/g, '') === cleaned.replace(/[^a-z0-9]/g, '')
+    );
+    if (directMatch) {
+      const res = context.openGameByName(directMatch.title);
+      if (res.success) {
+        ArcadeContextManager.setCurrentlyPlayingGame(directMatch);
+        ArcadeContextManager.setLastVoiceCommand('open_game');
+        return {
+          commandId: 'open_game',
+          matchedPhrase: rawTranscript,
+          responseText: name ? `Sure, ${name}. Opening ${directMatch.title}.` : `Opening ${directMatch.title}.`,
+          success: true,
+        };
+      }
+    }
+  }
+
+  // 13. Predefined Static Commands (hello, capabilities, show_commands, go_home, open_settings)
   for (const cmd of customCommands) {
     for (const phrase of cmd.phrases) {
       const normalizedPhrase = normalizeSpeech(phrase);

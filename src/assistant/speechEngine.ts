@@ -89,6 +89,17 @@ export class AssistantSpeechSynthesizer {
     });
   }
 
+  public speakEvil(
+    text: string,
+    options?: {
+      onStart?: () => void;
+      onEnd?: () => void;
+      onError?: (err: any) => void;
+    }
+  ): void {
+    VoiceManager.speakEvil(text, options);
+  }
+
   public stop(): void {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();

@@ -323,9 +323,11 @@ export const GameModal: React.FC<GameModalProps> = ({
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
             <button
+              id="game-modal-close-button"
               onClick={onClose}
               className="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
               title="Close"
+              aria-label="Close game"
             >
               <X className="w-5 h-5" />
             </button>

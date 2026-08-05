@@ -18,6 +18,13 @@ export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = {
   voicePitch: 1.0,
 };
 
+export interface ChalkboardEntry {
+  id: string;
+  question: string;
+  answer: string;
+  timestamp: number;
+}
+
 export interface AssistantState {
   isEnabled: boolean;
   micStatus: MicPermissionStatus;

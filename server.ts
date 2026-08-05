@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import bcrypt from 'bcryptjs';
+import { GoogleGenAI } from '@google/genai';
 import { initializeApp, getApps } from 'firebase/app';
 import {
   getFirestore,
@@ -754,6 +755,161 @@ app.post('/api/admin/games/delete', async (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 16. LIGHT AI - INTENT DECIPHERING ROUTE
+app.post('/api/assistant/general-query', async (req, res) => {
+  try {
+    const { prompt, username } = req.body || {};
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Missing prompt parameter' });
+    }
+
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt) {
+      return res.status(400).json({ error: 'Empty prompt parameter' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn('GEMINI_API_KEY missing for general query');
+      return res.json({ answer: 'Gemini AI is not configured on the server at the moment.' });
+    }
+
+    const genAI = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+
+    const systemPrompt = `You are Kreational Assistant operating in Board Mode. The user (${username || 'User'}) is asking a non-Kreational query such as a math problem, a joke, a riddle, or general knowledge.
+Provide a clear, helpful, direct, and conversational answer in 1-3 sentences suitable for speech synthesis output.
+Do not use Markdown formatting (no asterisks, hash signs, bullet points, or complex latex symbols) as the output will be read aloud by speech synthesis. Keep answers clean, concise, and accurate.`;
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: cleanPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.7,
+          maxOutputTokens: 250,
+        },
+      });
+    } catch (modelErr: any) {
+      console.warn('Primary model gemini-3.6-flash busy/unavailable for general query:', modelErr?.message || modelErr);
+      // Attempt fallback
+      return res.json({
+        answer: 'The AI model is currently experiencing high demand. Please try asking your question again in a few seconds.',
+      });
+    }
+
+    const answer = response?.text || "I'm sorry, I couldn't generate an answer right now.";
+    res.json({ answer });
+  } catch (err: any) {
+    console.warn('General query AI error:', err?.message || err);
+    res.json({
+      answer: 'Sorry, I had trouble generating a response right now. Please try again.',
+    });
+  }
+});
+
+app.post('/api/assistant/decipher', async (req, res) => {
+  try {
+    const { transcript, availableGames, currentTier, currentlyPlayingGame } = req.body || {};
+    if (!transcript || typeof transcript !== 'string') {
+      return res.status(400).json({ error: 'Missing transcript parameter' });
+    }
+
+    const cleanTranscript = transcript.trim();
+    if (!cleanTranscript) {
+      return res.json({ botCommand: 'unknown', confidence: 0 });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn('GEMINI_API_KEY not present, returning unknown for AI deciphering');
+      return res.json({ botCommand: 'unknown', reason: 'No API key' });
+    }
+
+    const genAI = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+
+    const gamesList = Array.isArray(availableGames)
+      ? availableGames.map((g: any) => (typeof g === 'string' ? g : g.title)).join(', ')
+      : '';
+
+    const systemPrompt = `You are a light AI intent translator for the Kreational Arcade voice bot.
+Translate the user's natural language spoken request into a canonical BOT COMMAND phrase that our command processor can execute.
+
+Canonical Bot Commands:
+1. "close game" - user wants to close, exit, leave, stop, or turn off the currently playing game or modal ("close it", "close this", "exit this", "shut it down", "close the game", "stop playing").
+2. "open <exact_game_title>" - user wants to play, open, launch, or start a specific game from available games. Select the single best matching game title from: [${gamesList}].
+3. "random game" - user wants a random game, surprise me, play anything.
+4. "play another one" - user wants to play another game, recommend another, try something different.
+5. "something similar" - user wants a game similar to current or last played.
+6. "open the previous game" - user wants to go back or reopen the previous game.
+7. "show tier <tier_name_or_number>" - user wants to switch to or view a tier (bronze, silver, gold, diamond, mythic, legendary, master, pro, or tier 1 through 8).
+8. "whats this game about" - user asks what the open game is about or how to play it.
+9. "what tier am i in" - user asks what tier they are currently viewing or in.
+10. "how many games in tier" - user asks how many games are in current tier.
+11. "thank you" - polite thanks or appreciation.
+12. "go home" - user wants to return home or go to games list.
+13. "open settings" - user wants to open settings or controls.
+14. "unknown" - request is completely unrelated or nonsensical.
+
+Current context:
+- Currently open game: ${currentlyPlayingGame ? (currentlyPlayingGame.title || currentlyPlayingGame) : 'None'}
+- Current tier: ${currentTier || 'None'}
+
+Your output MUST be a JSON object with this exact structure:
+{
+  "botCommand": "<the canonical command string, e.g. 'close game' or 'open MotoSpace Racing' or 'show tier gold'>",
+  "explanation": "<brief rationale>"
+}`;
+
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: `User said: "${cleanTranscript}"`,
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: 'application/json',
+          temperature: 0.0,
+          maxOutputTokens: 250,
+        },
+      });
+    } catch (modelErr: any) {
+      console.warn('Gemini model deciphering unavailable (high demand or error):', modelErr?.message || modelErr);
+      return res.json({ botCommand: 'unknown', reason: 'AI busy' });
+    }
+
+    const rawText = (response?.text || '{}').trim();
+    let parsed: any = {};
+    try {
+      const cleanJsonStr = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+      parsed = JSON.parse(cleanJsonStr);
+    } catch (e) {
+      console.warn('Failed to parse AI decipher JSON:', rawText);
+      const cmdMatch = rawText.match(/"botCommand"\s*:\s*"([^"]+)"/i);
+      if (cmdMatch && cmdMatch[1]) {
+        parsed = { botCommand: cmdMatch[1] };
+      }
+    }
+
+    const botCommand = parsed.botCommand || 'unknown';
+    res.json({
+      botCommand,
+      explanation: parsed.explanation || '',
+      rawTranscript: cleanTranscript,
+    });
+  } catch (err: any) {
+    console.warn('AI Deciphering endpoint error:', err?.message || err);
+    res.json({ botCommand: 'unknown', reason: err?.message || 'Error' });
   }
 });
 

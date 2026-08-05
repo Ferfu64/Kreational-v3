@@ -16,6 +16,8 @@ import {
   Terminal,
   MessageSquare,
   Sparkles,
+  Moon,
+  Zap,
 } from 'lucide-react';
 
 export const AssistantControlsModal: React.FC = () => {
@@ -39,6 +41,12 @@ export const AssistantControlsModal: React.FC = () => {
     clearTranscript,
     disableAssistant,
     executeCommand,
+    sleepWord,
+    wakeWord,
+    isSleeping,
+    setIsSleeping,
+    isBoardMode,
+    setIsBoardMode,
   } = useAssistant();
 
   const [testInputText, setTestInputText] = useState('Hello Kreational');
@@ -251,6 +259,67 @@ export const AssistantControlsModal: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Board Mode Toggle Card */}
+        <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/[0.03] backdrop-blur-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-mono font-bold uppercase text-slate-200">
+              <span>Board Mode Status</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsBoardMode(!isBoardMode)}
+              className={`px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                isBoardMode
+                  ? 'bg-cyan-500/30 border border-cyan-400/60 text-cyan-200 hover:bg-cyan-500/40'
+                  : 'bg-slate-800 border border-slate-600 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {isBoardMode ? 'OPEN (Text Active / Games Off)' : 'CLOSED (Games Active / Text Off)'}
+            </button>
+          </div>
+        </div>
+
+        {/* Custom Sleep + Wake Word Status (Pulled from Settings) */}
+        <div className="p-4 rounded-xl border border-purple-500/30 bg-purple-500/[0.03] backdrop-blur-md space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-mono font-bold uppercase text-slate-200">
+              <Moon className="w-4 h-4 text-purple-400" />
+              <span>Sleep & Wake Word Status</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSleeping(!isSleeping)}
+              className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider cursor-pointer transition-colors ${
+                isSleeping
+                  ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30'
+                  : 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+              }`}
+            >
+              {isSleeping ? 'Asleep (Click to Wake)' : 'Active (Click to Sleep)'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="p-2.5 rounded-lg bg-black/40 border border-white/10 space-y-1">
+              <span className="text-[10px] font-mono text-purple-300 uppercase tracking-wider block">Sleep Trigger</span>
+              <span className="text-xs font-mono font-bold text-purple-200 bg-purple-900/40 px-2 py-0.5 rounded border border-purple-500/30 inline-block">
+                "{sleepWord}"
+              </span>
+            </div>
+            <div className="p-2.5 rounded-lg bg-black/40 border border-white/10 space-y-1">
+              <span className="text-[10px] font-mono text-cyan-300 uppercase tracking-wider block">Wake Trigger</span>
+              <span className="text-xs font-mono font-bold text-cyan-200 bg-cyan-900/40 px-2 py-0.5 rounded border border-cyan-500/30 inline-block">
+                "{wakeWord}"
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1">
+            <span>Configured in Main Settings</span>
+            <span className="text-purple-300">Say "{sleepWord}" to sleep • "{wakeWord}" to wake</span>
           </div>
         </div>
 

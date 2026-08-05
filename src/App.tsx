@@ -23,6 +23,7 @@ import {
 import { AssistantProvider } from './assistant/AssistantContext';
 import { AssistantFloatingButton } from './assistant/AssistantFloatingButton';
 import { AssistantControlsModal } from './assistant/AssistantControlsModal';
+import { ChalkboardModal } from './assistant/ChalkboardModal';
 import { ArcadeContextManager } from './assistant/ArcadeContextManager';
 
 const INITIAL_TIERS: Tier[] = [
@@ -243,6 +244,10 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    ArcadeContextManager.setSelectedTier(selectedTierId);
+  }, [selectedTierId]);
+
   if (loadingAuth) {
     return <LoadingScreen message="INITIALIZING KREATIONAL" subMessage="Verifying credentials & session..." />;
   }
@@ -254,9 +259,25 @@ export default function App() {
   const selectedTier = tiers.find((t) => t.id === selectedTierId) || tiers[0] || INITIAL_TIERS[0];
   const currentTierGames = games.filter((g) => g.tier === selectedTierId);
 
-  useEffect(() => {
-    ArcadeContextManager.setSelectedTier(selectedTierId, currentTierGames);
-  }, [selectedTierId, currentTierGames]);
+  const canUserAccessGame = (game: Game): boolean => {
+    if (!user) return false;
+    const isAdmin = user.role === 'admin' || user.username === 'Kreator' || user.id === 'kreator-admin-id';
+    if (isAdmin) return true;
+
+    const userPurchasedTiers = user.purchasedTiers || [];
+    if (userPurchasedTiers.includes(game.tier)) return true;
+
+    const now = Date.now() - serverTimeOffset;
+    const tempAccess = (user.temporaryAccess || []).find(
+      (ta) => (ta.gameId && ta.gameId === game.id) || (ta.tierId && ta.tierId === game.tier)
+    );
+    if (tempAccess) {
+      const expiresAt = Number(tempAccess.grantedAt) + Number(tempAccess.durationSeconds) * 1000;
+      if (now < expiresAt) return true;
+    }
+
+    return false;
+  };
 
   const handleOpenGameByName = (gameQuery: string) => {
     let query = gameQuery.toLowerCase().trim();
@@ -305,6 +326,14 @@ export default function App() {
     }
 
     if (matched) {
+      if (!canUserAccessGame(matched)) {
+        const tierObj = tiers.find((t) => t.id === matched.tier);
+        const tierName = tierObj ? tierObj.name : matched.tier;
+        return {
+          success: false,
+          reason: `Access denied. You do not have access to ${matched.title}. Unlock ${tierName} tier or request access.`,
+        };
+      }
       setPlayingGame(matched);
       return { success: true, gameName: matched.title };
     }
@@ -315,16 +344,40 @@ export default function App() {
     if (!games || games.length === 0) {
       return { success: false, reason: 'No games available.' };
     }
-    const randomIndex = Math.floor(Math.random() * games.length);
-    const chosen = games[randomIndex];
+    const accessibleGames = games.filter((g) => canUserAccessGame(g));
+    if (accessibleGames.length === 0) {
+      return { success: false, reason: 'You do not have access to any games in this library. Please request access first.' };
+    }
+    const randomIndex = Math.floor(Math.random() * accessibleGames.length);
+    const chosen = accessibleGames[randomIndex];
     setPlayingGame(chosen);
     return { success: true, gameName: chosen.title };
   };
 
   const handleCloseCurrentGame = () => {
-    if (playingGame) {
-      const name = playingGame.title;
+    const hasCloseBtn =
+      typeof document !== 'undefined' &&
+      Boolean(document.getElementById('game-modal-close-button') || document.getElementById('game-modal-overlay'));
+    const isInGame = Boolean(playingGame);
+
+    console.log(
+      '[Kreational Assistant Game State Check] isInGame state:',
+      isInGame,
+      '| DOM modal visible:',
+      hasCloseBtn,
+      '| Matches:',
+      isInGame === hasCloseBtn
+    );
+
+    if (isInGame || hasCloseBtn) {
+      const name = playingGame?.title || 'Current Game';
       setPlayingGame(null);
+      if (typeof document !== 'undefined') {
+        const btn = document.getElementById('game-modal-close-button') as HTMLButtonElement | null;
+        if (btn) {
+          btn.click();
+        }
+      }
       return { success: true, gameName: name };
     }
     return { success: false, reason: 'Request failed. You are currently not in a game.' };
@@ -482,6 +535,9 @@ export default function App() {
 
         {/* Assistant Controls & Permissions Modal */}
         <AssistantControlsModal />
+
+        {/* Chalkboard Pop-up UI when Board Mode is Active */}
+        <ChalkboardModal />
 
         {/* Active Game Play Modal */}
         {playingGame && (

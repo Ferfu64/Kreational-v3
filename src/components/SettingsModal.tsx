@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Palette, Sliders, Check, Wifi, WifiOff, RefreshCw, Search, Bot, Volume2, Play, RotateCcw } from 'lucide-react';
+import { Settings, X, Palette, Sliders, Check, Wifi, WifiOff, RefreshCw, Search, Bot, Volume2, Play, RotateCcw, Moon, Zap } from 'lucide-react';
 import { VoiceManager, VoiceConfig } from '../assistant/VoiceManager';
+import { useAssistant } from '../assistant/AssistantContext';
 
 export interface UserSettings {
   theme: 'cyber-void' | 'obsidian-matrix' | 'amethyst-night' | 'emerald-synth' | 'sunset-crimson';
@@ -221,6 +222,85 @@ const VoiceSettingsSection: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* Sleep & Wake Word Trigger Configuration */}
+      <SleepWakeSettingsSection />
+    </div>
+  );
+};
+
+const SleepWakeSettingsSection: React.FC = () => {
+  let assistantContext: any = null;
+  try {
+    assistantContext = useAssistant();
+  } catch (e) {
+    // Fallback if rendered outside AssistantProvider
+  }
+
+  const [localSleepWord, setLocalSleepWord] = useState(() => (typeof localStorage !== 'undefined' && localStorage.getItem('kreational_assistant_sleep_word')) || 'sleep');
+  const [localWakeWord, setLocalWakeWord] = useState(() => (typeof localStorage !== 'undefined' && localStorage.getItem('kreational_assistant_wake_word')) || 'wake up');
+
+  const sleepWord = assistantContext ? assistantContext.sleepWord : localSleepWord;
+  const wakeWord = assistantContext ? assistantContext.wakeWord : localWakeWord;
+
+  const handleSleepChange = (val: string) => {
+    if (assistantContext) {
+      assistantContext.setSleepWord(val);
+    } else {
+      setLocalSleepWord(val);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('kreational_assistant_sleep_word', val.trim() || 'sleep');
+      }
+    }
+  };
+
+  const handleWakeChange = (val: string) => {
+    if (assistantContext) {
+      assistantContext.setWakeWord(val);
+    } else {
+      setLocalWakeWord(val);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('kreational_assistant_wake_word', val.trim() || 'wake up');
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-2.5 pt-3 border-t border-cyan-500/20">
+      <label className="text-xs font-mono font-bold uppercase text-purple-300 flex items-center justify-between">
+        <span className="flex items-center gap-2">
+          <Moon className="w-4 h-4 text-purple-400" />
+          <span>Custom Sleep & Wake Words</span>
+        </span>
+        <span className="text-[10px] text-cyan-400 font-normal border border-cyan-500/30 px-2 py-0.5 rounded-full bg-cyan-950/40">
+          Assistant Triggers
+        </span>
+      </label>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <div>
+          <label className="text-[10px] font-mono text-slate-400 block mb-1">Sleep Word Trigger</label>
+          <input
+            type="text"
+            value={sleepWord}
+            onChange={(e) => handleSleepChange(e.target.value)}
+            placeholder="e.g. sleep"
+            className="w-full py-1.5 px-3 bg-black/60 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-purple-500/50"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] font-mono text-slate-400 block mb-1">Wake Word Trigger</label>
+          <input
+            type="text"
+            value={wakeWord}
+            onChange={(e) => handleWakeChange(e.target.value)}
+            placeholder="e.g. wake up"
+            className="w-full py-1.5 px-3 bg-black/60 border border-white/10 rounded-xl text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500/50"
+          />
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-500 font-mono leading-tight">
+        Saying your sleep word puts the assistant into sleep mode. Saying your wake word resumes active listening.
+      </p>
     </div>
   );
 };

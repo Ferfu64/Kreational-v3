@@ -10,6 +10,7 @@ export const AssistantFloatingButton: React.FC = () => {
     toggleControls,
     isControlsOpen,
     error,
+    isBoardMode,
   } = useAssistant();
 
   if (!isEnabled) return null;
@@ -42,6 +43,11 @@ export const AssistantFloatingButton: React.FC = () => {
             ? 'MIC DENIED'
             : 'ASSISTANT READY'}
         </span>
+        {isBoardMode && (
+          <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold bg-cyan-500/30 text-cyan-200 rounded border border-cyan-400/40">
+            BOARD
+          </span>
+        )}
       </div>
 
       {/* Futuristic Floating Button */}

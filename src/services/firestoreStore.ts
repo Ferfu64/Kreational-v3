@@ -16,6 +16,7 @@ import {
   addLocalAccount,
   deleteLocalAccount,
 } from '../utils/localAuth';
+import { safeGet, safeSet } from '../utils/persistentStorage';
 import { sharedGamesModule } from './gamesModule';
 
 const USERS_COLLECTION = 'users';
@@ -305,7 +306,7 @@ export async function fetchAllRequestsStore(): Promise<GameRequest[]> {
   }
 
   try {
-    const raw = localStorage.getItem('kreational_local_requests');
+    const raw = safeGet('kreational_local_requests');
     if (raw) {
       const localReqs: GameRequest[] = JSON.parse(raw);
       localReqs.forEach((r) => requestMap.set(r.id, r));
@@ -322,10 +323,10 @@ export async function fetchUserRequestsStore(userId: string): Promise<GameReques
 
 export async function createRequestStore(req: GameRequest): Promise<void> {
   try {
-    const raw = localStorage.getItem('kreational_local_requests');
+    const raw = safeGet('kreational_local_requests');
     const localReqs: GameRequest[] = raw ? JSON.parse(raw) : [];
     localReqs.push(req);
-    localStorage.setItem('kreational_local_requests', JSON.stringify(localReqs));
+    safeSet('kreational_local_requests', JSON.stringify(localReqs));
   } catch (e) {}
 
   try {
@@ -343,7 +344,7 @@ export async function resolveRequestStore(
   let reqObj: GameRequest | null = null;
 
   try {
-    const raw = localStorage.getItem('kreational_local_requests');
+    const raw = safeGet('kreational_local_requests');
     if (raw) {
       const localReqs: GameRequest[] = JSON.parse(raw);
       const idx = localReqs.findIndex((r) => r.id === requestId);
@@ -352,7 +353,7 @@ export async function resolveRequestStore(
         localReqs[idx].resolvedAt = Date.now();
         if (durationSeconds) localReqs[idx].durationSeconds = durationSeconds;
         reqObj = localReqs[idx];
-        localStorage.setItem('kreational_local_requests', JSON.stringify(localReqs));
+        safeSet('kreational_local_requests', JSON.stringify(localReqs));
       }
     }
   } catch (e) {}
@@ -369,6 +370,32 @@ export async function resolveRequestStore(
     }
   } catch (err) {
     console.warn('Firestore update request status failed:', err);
+  }
+
+  if (status === 'denied' && reqObj) {
+    const targetUserId = reqObj.userId;
+    const currentUsers = await fetchAllUsers();
+    const targetUser = currentUsers.find((u) => u.id === targetUserId || u.username === reqObj?.username);
+
+    if (targetUser) {
+      const updatedKrests = (targetUser.krests || 0) + 25;
+      targetUser.krests = updatedKrests;
+
+      const localAccounts = getLocalAccounts();
+      const acc = localAccounts.find((a) => a.user.id === targetUser.id);
+      if (acc) {
+        addLocalAccount(targetUser, acc.secretWord || targetUser.secretWord || '');
+      }
+      try {
+        const uDocRef = doc(db, USERS_COLLECTION, targetUser.id);
+        const uSnap = await getDoc(uDocRef);
+        if (uSnap.exists()) {
+          const uData = uSnap.data() as UserAccountRecord;
+          uData.user.krests = updatedKrests;
+          await setDoc(uDocRef, uData);
+        }
+      } catch (e) {}
+    }
   }
 
   if (status === 'accepted' && reqObj) {

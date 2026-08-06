@@ -1,4 +1,5 @@
 import { User, TierId } from '../types';
+import { safeGet, safeSet } from './persistentStorage';
 
 export const KREATOR_ADMIN_USER: User = {
   id: 'kreator-admin-id',
@@ -19,7 +20,7 @@ const STORAGE_KEY = 'kreational_local_accounts_v1';
 
 export function getLocalAccounts(): LocalAccountRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = safeGet(STORAGE_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch (err) {
@@ -30,7 +31,7 @@ export function getLocalAccounts(): LocalAccountRecord[] {
 
 export function saveLocalAccounts(accounts: LocalAccountRecord[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
+    safeSet(STORAGE_KEY, JSON.stringify(accounts));
   } catch (err) {
     console.warn('Failed to save local accounts to localStorage:', err);
   }

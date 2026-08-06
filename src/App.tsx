@@ -11,20 +11,32 @@ import { AccountManagementPanel } from './components/AccountManagementPanel';
 import { RequestsPanel } from './components/RequestsPanel';
 import { GameManagementPanel } from './components/GameManagementPanel';
 import { SettingsModal, UserSettings, DEFAULT_SETTINGS } from './components/SettingsModal';
+import { ProfileModal } from './components/ProfileModal';
+import { ShopModal } from './components/ShopModal';
 import { BrandingFooter } from './components/BrandingFooter';
 import { LoadingScreen } from './components/LoadingScreen';
+import {
+  KreditGainAnimation,
+  KreditGainEvent,
+} from './components/KreditGainAnimation';
+import { recordGamePlayedInQuests } from './utils/questManager';
+import { SFX } from './utils/sfx';
 import { DEFAULT_GAMES } from './data/defaultGames';
 import { KREATOR_ADMIN_USER } from './utils/localAuth';
+import { safeGet, safeSet, safeRemove } from './utils/persistentStorage';
+import { normalizeUserWithProfile } from './utils/userProfile';
 import {
   fetchAllGamesStore,
   fetchAllRequestsStore,
   fetchAllUsers,
+  updateUserAccount,
 } from './services/firestoreStore';
 import { AssistantProvider } from './assistant/AssistantContext';
 import { AssistantFloatingButton } from './assistant/AssistantFloatingButton';
 import { AssistantControlsModal } from './assistant/AssistantControlsModal';
 import { ChalkboardModal } from './assistant/ChalkboardModal';
 import { ArcadeContextManager } from './assistant/ArcadeContextManager';
+import { ApprovalNotifications } from './components/ApprovalNotifications';
 
 const INITIAL_TIERS: Tier[] = [
   { id: 'bronze', name: 'Bronze', displayOrder: 1 },
@@ -42,14 +54,53 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
-
-  // Online / Offline Status
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [kreditGainEvents, setKreditGainEvents] = useState<KreditGainEvent[]>([]);
+
+  const handleTriggerKreditGain = (amount: number, sourceX?: number, sourceY?: number) => {
+    SFX.playCoin();
+    const newEvent: KreditGainEvent = {
+      id: `kredit_gain_${Date.now()}_${Math.random()}`,
+      amount,
+      sourceX,
+      sourceY,
+    };
+    setKreditGainEvents((prev) => [...prev, newEvent]);
+  };
+
+  const handleKreditEventComplete = (id: string) => {
+    setKreditGainEvents((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  // Passive Krests earning: 1 Krest every 1 minute active on site
+  useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(() => {
+      setUser((currentUser) => {
+        if (!currentUser) return null;
+        const updatedKrests = (currentUser.krests || 0) + 1;
+        const updatedUser: User = {
+          ...currentUser,
+          krests: updatedKrests,
+        };
+        safeSet('kreational_user', JSON.stringify(updatedUser));
+        updateUserAccount(updatedUser.id, {
+          username: updatedUser.username,
+          purchasedTiers: updatedUser.purchasedTiers,
+        }).catch(() => {});
+        handleTriggerKreditGain(1);
+        return updatedUser;
+      });
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [user?.id]);
 
   // User Settings State
   const [userSettings, setUserSettings] = useState<UserSettings>(() => {
     try {
-      const stored = localStorage.getItem('kreational_user_settings');
+      const stored = safeGet('kreational_user_settings');
       return stored ? JSON.parse(stored) : DEFAULT_SETTINGS;
     } catch (e) {
       return DEFAULT_SETTINGS;
@@ -69,13 +120,23 @@ export default function App() {
     };
   }, []);
 
-  // Modals
+  const handlePlayGame = (game: Game) => {
+    SFX.playClick();
+    setPlayingGame(game);
+    if (user) {
+      const updatedUser = recordGamePlayedInQuests(user);
+      handleUpdateUser(updatedUser);
+    }
+  };
+
+  // Modals & Panels
   const [playingGame, setPlayingGame] = useState<Game | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isShopOpen, setIsShopOpen] = useState(false);
 
   // Update DOM attributes dynamically when userSettings, playingGame, or user changes
   useEffect(() => {
     const root = document.documentElement;
-    // Apply visual theme to the background of the site ONLY when logged in and NOT playing a game
     if (user && !playingGame) {
       root.setAttribute('data-theme', userSettings.theme);
     } else {
@@ -85,7 +146,7 @@ export default function App() {
     root.setAttribute('data-density', userSettings.density);
 
     try {
-      localStorage.setItem('kreational_user_settings', JSON.stringify(userSettings));
+      safeSet('kreational_user_settings', JSON.stringify(userSettings));
     } catch (e) {
       console.warn('Failed to save user settings:', e);
     }
@@ -116,33 +177,45 @@ export default function App() {
     setServerTimeOffset(0);
   };
 
+  const handleUpdateUser = (updated: User) => {
+    setUser(updated);
+    safeSet('kreational_user', JSON.stringify(updated));
+    updateUserAccount(updated.id, {
+      username: updated.username,
+      purchasedTiers: updated.purchasedTiers,
+    }).catch(() => {});
+  };
+
   // Restore Session
   useEffect(() => {
     syncServerTime();
 
-    const storedUser = localStorage.getItem('kreational_user') || localStorage.getItem('kreations_user');
-    const storedToken = localStorage.getItem('kreational_token') || localStorage.getItem('kreations_token');
+    const storedUser = safeGet('kreational_user') || safeGet('kreations_user');
+    const storedToken = safeGet('kreational_token') || safeGet('kreations_token');
 
     if (storedUser && storedToken) {
       try {
-        const parsed = JSON.parse(storedUser);
-        setUser(parsed);
+        const parsed: User = JSON.parse(storedUser);
+        const { updatedUser } = normalizeUserWithProfile(parsed);
+        setUser(updatedUser);
         setToken(storedToken);
+
         // Refresh user profile from Firestore
         fetchAllUsers().then((allUsers) => {
           const match = allUsers.find(
             (u) => u.id === parsed.id || u.username.toLowerCase() === parsed.username.toLowerCase()
           );
           if (match) {
-            setUser(match);
-            localStorage.setItem('kreational_user', JSON.stringify(match));
+            const { updatedUser: freshUser } = normalizeUserWithProfile(match);
+            setUser(freshUser);
+            safeSet('kreational_user', JSON.stringify(freshUser));
           }
         }).catch(console.error);
       } catch (err) {
-        localStorage.removeItem('kreational_user');
-        localStorage.removeItem('kreational_token');
-        localStorage.removeItem('kreations_user');
-        localStorage.removeItem('kreations_token');
+        safeRemove('kreational_user');
+        safeRemove('kreational_token');
+        safeRemove('kreations_user');
+        safeRemove('kreations_token');
       }
     }
     setLoadingAuth(false);
@@ -185,10 +258,11 @@ export default function App() {
 
   // Handle Login Success
   const handleLoginSuccess = (newUser: User, newToken: string) => {
-    setUser(newUser);
+    const { updatedUser } = normalizeUserWithProfile(newUser);
+    setUser(updatedUser);
     setToken(newToken);
-    localStorage.setItem('kreational_user', JSON.stringify(newUser));
-    localStorage.setItem('kreational_token', newToken);
+    safeSet('kreational_user', JSON.stringify(updatedUser));
+    safeSet('kreational_token', newToken);
   };
 
   // Global "Override" typing bypass listener when not focused in an input box
@@ -220,10 +294,10 @@ export default function App() {
   const handleLogout = () => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem('kreational_user');
-    localStorage.removeItem('kreational_token');
-    localStorage.removeItem('kreations_user');
-    localStorage.removeItem('kreations_token');
+    safeRemove('kreational_user');
+    safeRemove('kreational_token');
+    safeRemove('kreations_user');
+    safeRemove('kreations_token');
     setActiveTab('games');
   };
 
@@ -236,8 +310,9 @@ export default function App() {
         (u) => u.id === user.id || u.username.toLowerCase() === user.username.toLowerCase()
       );
       if (match) {
-        setUser(match);
-        localStorage.setItem('kreational_user', JSON.stringify(match));
+        const { updatedUser } = normalizeUserWithProfile(match);
+        setUser(updatedUser);
+        safeSet('kreational_user', JSON.stringify(updatedUser));
       }
     } catch (err) {
       console.warn('User profile refresh failed:', err);
@@ -285,25 +360,21 @@ export default function App() {
       return { success: false, reason: "I couldn't find that game." };
     }
 
-    // Clean common vocal prefixes/suffixes like "a", "an", "the", "game", "games"
     const cleaned = query
       .replace(/^(a|an|the)\s+/i, '')
       .replace(/\s+(game|games)$/i, '')
       .trim();
 
-    // 1. Exact title match
     let matched = games.find(
       (g) => g.title.toLowerCase() === query || g.title.toLowerCase() === cleaned
     );
 
-    // 2. Substring match on title
     if (!matched && cleaned) {
       matched = games.find(
         (g) => g.title.toLowerCase().includes(cleaned) || cleaned.includes(g.title.toLowerCase())
       );
     }
 
-    // 3. Category / Keyword fallback mapping (e.g., "racing game" -> MotoSpace Racing)
     if (!matched && cleaned) {
       const keywordMap: Record<string, string[]> = {
         racing: ['racing', 'racer', 'truck', 'moto', 'car', 'drive', 'speed', 'hills'],
@@ -360,15 +431,6 @@ export default function App() {
       Boolean(document.getElementById('game-modal-close-button') || document.getElementById('game-modal-overlay'));
     const isInGame = Boolean(playingGame);
 
-    console.log(
-      '[Kreational Assistant Game State Check] isInGame state:',
-      isInGame,
-      '| DOM modal visible:',
-      hasCloseBtn,
-      '| Matches:',
-      isInGame === hasCloseBtn
-    );
-
     if (isInGame || hasCloseBtn) {
       const name = playingGame?.title || 'Current Game';
       setPlayingGame(null);
@@ -386,7 +448,6 @@ export default function App() {
   const handleShowTier = (tierTarget: string | number) => {
     const targetStr = String(tierTarget).toLowerCase().trim();
 
-    // Parse numeric tier if present (e.g., "Tier 2", "2")
     const numMatch = targetStr.match(/\d+/);
     let matchedTier: Tier | undefined;
 
@@ -433,7 +494,7 @@ export default function App() {
       onShowTier={handleShowTier}
     >
       <div id="app-root" className={`min-h-screen ${user && !playingGame ? 'bg-transparent' : 'bg-[#050505]'} text-slate-100 flex flex-col font-sans relative overflow-x-hidden selection:bg-purple-500/30 selection:text-purple-200`}>
-        {/* Background ambient lighting for Frosted Glass theme */}
+        {/* Background ambient lighting */}
         <div className="fixed -top-32 -left-32 w-96 h-96 bg-purple-600/15 rounded-full blur-[120px] pointer-events-none" />
         <div className="fixed top-1/3 -right-32 w-96 h-96 bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="fixed -bottom-32 left-1/3 w-96 h-96 bg-purple-900/15 rounded-full blur-[120px] pointer-events-none" />
@@ -445,6 +506,8 @@ export default function App() {
           setActiveTab={setActiveTab}
           onOpenRequestsHistory={() => setIsRequestHistoryOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenProfile={() => setIsProfileOpen(true)}
+          onOpenShop={() => setIsShopOpen(true)}
           onLogout={handleLogout}
           pendingRequestsCount={pendingRequestsCount}
           isOnline={isOnline}
@@ -477,7 +540,7 @@ export default function App() {
                 allGames={games}
                 tiers={tiers}
                 user={user}
-                onPlayGame={(game) => setPlayingGame(game)}
+                onPlayGame={handlePlayGame}
                 onRequestGameAccess={(game) => {
                   setRequestModal({
                     isOpen: true,
@@ -527,8 +590,20 @@ export default function App() {
           )}
         </main>
 
-        {/* Unobtrusive Branding Footer on regular pages */}
+        {/* Unobtrusive Branding Footer */}
         <BrandingFooter variant="unobtrusive" />
+
+        {/* Access Approval Notifications (Headless system/push notifier) */}
+        <ApprovalNotifications
+          user={user}
+          tiers={tiers}
+          games={games}
+          onSelectTier={(tierId) => {
+            setSelectedTierId(tierId as TierId);
+            setActiveTab('games');
+          }}
+          onPlayGame={handlePlayGame}
+        />
 
         {/* Assistant Floating Action Button */}
         <AssistantFloatingButton />
@@ -549,7 +624,7 @@ export default function App() {
           />
         )}
 
-        {/* Access Request Modal */}
+        {/* Access Request & Krests Instant Unlock Modal */}
         {requestModal.isOpen && (
           <RequestModal
             type={requestModal.type}
@@ -560,8 +635,37 @@ export default function App() {
             onRequestSubmitted={() => {
               fetchPendingRequestsCount();
             }}
+            onUpdateUser={handleUpdateUser}
+            onPlayGame={(g) => setPlayingGame(g)}
           />
         )}
+
+        {/* User Profile Modal */}
+        {isProfileOpen && (
+          <ProfileModal
+            user={user}
+            onUpdateUser={handleUpdateUser}
+            onClose={() => setIsProfileOpen(false)}
+            onOpenShop={() => setIsShopOpen(true)}
+          />
+        )}
+
+        {/* Shop & Krates Modal */}
+        {isShopOpen && (
+          <ShopModal
+            user={user}
+            onUpdateUser={handleUpdateUser}
+            onClose={() => setIsShopOpen(false)}
+            onOpenProfile={() => setIsProfileOpen(true)}
+            onTriggerKreditGain={handleTriggerKreditGain}
+          />
+        )}
+
+        {/* Global Kredit Flying Coin Animation overlay */}
+        <KreditGainAnimation
+          events={kreditGainEvents}
+          onEventComplete={handleKreditEventComplete}
+        />
 
         {/* User Request History Modal */}
         {isRequestHistoryOpen && (

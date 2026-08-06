@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { User } from '../types';
-import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff } from 'lucide-react';
+import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame } from 'lucide-react';
+import { SFX } from '../utils/sfx';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
 interface NavbarProps {
@@ -9,6 +10,8 @@ interface NavbarProps {
   setActiveTab: (tab: 'games' | 'admin-accounts' | 'admin-requests' | 'admin-games') => void;
   onOpenRequestsHistory: () => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
+  onOpenShop: () => void;
   onLogout: () => void;
   pendingRequestsCount?: number;
   isOnline?: boolean;
@@ -20,12 +23,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveTab,
   onOpenRequestsHistory,
   onOpenSettings,
+  onOpenProfile,
+  onOpenShop,
   onLogout,
   pendingRequestsCount = 0,
   isOnline = true,
 }) => {
   const isAdmin = user.role === 'admin' || user.username === 'Kreator';
   const navScrollRef = useRef<HTMLDivElement>(null);
+  const krests = user.krests || 0;
+  const streak = user.dailyStreak || 1;
 
   const scrollNav = (direction: 'left' | 'right') => {
     if (navScrollRef.current) {
@@ -81,7 +88,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <button
                 id="nav-games-button"
-                onClick={() => setActiveTab('games')}
+                onClick={() => {
+                  SFX.playClick();
+                  setActiveTab('games');
+                }}
                 className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 ${
                   activeTab === 'games'
                     ? 'bg-purple-600/30 text-white border border-purple-500/50 shadow-md shadow-purple-950/40'
@@ -92,10 +102,26 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span>Game Library</span>
               </button>
 
+              {/* Shop & Krates Button */}
+              <button
+                id="nav-shop-button"
+                onClick={() => {
+                  SFX.playClick();
+                  onOpenShop();
+                }}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-sm"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                <span>Shop & Krates</span>
+              </button>
+
               {/* My Request History Button */}
               <button
                 id="nav-my-requests-button"
-                onClick={onOpenRequestsHistory}
+                onClick={() => {
+                  SFX.playClick();
+                  onOpenRequestsHistory();
+                }}
                 className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent hover:border-white/10 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer relative shrink-0"
               >
                 <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
@@ -162,7 +188,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </div>
 
-          {/* User Profile, Offline Badge & Controls */}
+          {/* User Profile Trigger Button & Controls */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {!isOnline && (
               <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-mono font-bold animate-pulse">
@@ -171,15 +197,43 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-white/10 backdrop-blur-md">
-              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400/50' : 'bg-amber-400'}`} />
-              <span className="text-xs font-semibold text-purple-300">{user.username}</span>
-              {isAdmin && (
-                <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                  KREATOR
+            {/* User Profile Button in Top Corner */}
+            <button
+              id="nav-user-profile-button"
+              onClick={() => {
+                SFX.playClick();
+                onOpenProfile();
+              }}
+              className="flex items-center gap-2 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-full bg-white/[0.05] hover:bg-white/10 border border-purple-500/30 hover:border-purple-400 backdrop-blur-md transition-all cursor-pointer group shadow-lg shadow-purple-950/30"
+              title="Click to view Profile, Streak, Badges & Cosmetics"
+            >
+              <div className="relative w-6 h-6 rounded-full overflow-hidden border border-purple-400/60 shrink-0">
+                <img
+                  src={user.cosmetics?.customAvatarUrl || kreationsLogo}
+                  alt={user.username}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors">
+                  {user.username}
                 </span>
-              )}
-            </div>
+
+                {/* Krests count pill */}
+                <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-bold flex items-center gap-0.5">
+                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  {krests}
+                </span>
+
+                {/* Streak pill */}
+                <span className="hidden sm:flex px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40 text-[10px] font-mono font-bold items-center gap-0.5">
+                  <Flame className="w-2.5 h-2.5 text-orange-400" />
+                  {streak}d
+                </span>
+              </div>
+            </button>
 
             <button
               id="nav-settings-button"

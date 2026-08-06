@@ -1,3 +1,5 @@
+import { safeGet, safeSet, safeRemove } from '../utils/persistentStorage';
+
 export interface VoiceConfig {
   voiceURI: string | null;
   rate: number;
@@ -16,6 +18,16 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
 export const VOICE_DICTIONARY: Record<string, string> = {
   Kreator: 'Creator',
   kreator: 'creator',
+  Kreational: 'Creation-al',
+  kreational: 'creation-al',
+  AZGAMES: 'A Z Games',
+  azgames: 'A Z Games',
+  vs: 'versus',
+  VS: 'versus',
+  ui: 'U I',
+  UI: 'U I',
+  url: 'U R L',
+  URL: 'U R L',
 };
 
 const STORAGE_KEY_VOICE = 'kreational_assistant_voice_uri';
@@ -40,7 +52,14 @@ class VoiceManagerClass {
   private listeners: Set<() => void> = new Set();
   private queue: SpeechQueueItem[] = [];
   private isProcessingQueue: boolean = false;
-  private currentUtterances: SpeechSynthesisUtterance[] = [];
+
+  // Hard reference retention to defeat JS Garbage Collector
+  private activeUtterances: SpeechSynthesisUtterance[] = [];
+  private activeUtterance: SpeechSynthesisUtterance | null = null;
+
+  // Chrome/Safari speech synthesis keep-alive timer
+  private keepAliveTimer: any = null;
+  private isAudioUnlocked: boolean = false;
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -50,7 +69,40 @@ class VoiceManagerClass {
           this.updateVoices();
         };
       }
+      this.setupMobileUnlock();
     }
+  }
+
+  /**
+   * One-time user interaction handler to unlock web audio & speechSynthesis on iOS/Android PWA
+   */
+  private setupMobileUnlock(): void {
+    if (typeof window === 'undefined') return;
+
+    const unlock = () => {
+      if (this.isAudioUnlocked) return;
+      this.isAudioUnlocked = true;
+
+      try {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.getVoices();
+          const silent = new SpeechSynthesisUtterance(' ');
+          silent.volume = 0.01;
+          silent.rate = 10;
+          window.speechSynthesis.speak(silent);
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+
+    window.addEventListener('touchstart', unlock, { passive: true });
+    window.addEventListener('click', unlock, { passive: true });
+    window.addEventListener('keydown', unlock, { passive: true });
   }
 
   public updateVoices(): void {
@@ -81,12 +133,10 @@ class VoiceManagerClass {
   }
 
   public getConfig(): VoiceConfig {
-    if (typeof localStorage === 'undefined') return DEFAULT_VOICE_CONFIG;
-
-    const voiceURI = localStorage.getItem(STORAGE_KEY_VOICE);
-    const rateRaw = localStorage.getItem(STORAGE_KEY_RATE);
-    const pitchRaw = localStorage.getItem(STORAGE_KEY_PITCH);
-    const volumeRaw = localStorage.getItem(STORAGE_KEY_VOLUME);
+    const voiceURI = safeGet(STORAGE_KEY_VOICE);
+    const rateRaw = safeGet(STORAGE_KEY_RATE);
+    const pitchRaw = safeGet(STORAGE_KEY_PITCH);
+    const volumeRaw = safeGet(STORAGE_KEY_VOLUME);
 
     return {
       voiceURI: voiceURI || null,
@@ -97,26 +147,24 @@ class VoiceManagerClass {
   }
 
   public saveConfig(updated: Partial<VoiceConfig>): VoiceConfig {
-    if (typeof localStorage === 'undefined') return DEFAULT_VOICE_CONFIG;
-
     if (updated.voiceURI !== undefined) {
       if (updated.voiceURI === null) {
-        localStorage.removeItem(STORAGE_KEY_VOICE);
+        safeRemove(STORAGE_KEY_VOICE);
       } else {
-        localStorage.setItem(STORAGE_KEY_VOICE, updated.voiceURI);
+        safeSet(STORAGE_KEY_VOICE, updated.voiceURI);
       }
     }
 
     if (updated.rate !== undefined) {
-      localStorage.setItem(STORAGE_KEY_RATE, updated.rate.toString());
+      safeSet(STORAGE_KEY_RATE, updated.rate.toString());
     }
 
     if (updated.pitch !== undefined) {
-      localStorage.setItem(STORAGE_KEY_PITCH, updated.pitch.toString());
+      safeSet(STORAGE_KEY_PITCH, updated.pitch.toString());
     }
 
     if (updated.volume !== undefined) {
-      localStorage.setItem(STORAGE_KEY_VOLUME, updated.volume.toString());
+      safeSet(STORAGE_KEY_VOLUME, updated.volume.toString());
     }
 
     this.notifyListeners();
@@ -124,12 +172,10 @@ class VoiceManagerClass {
   }
 
   public resetConfig(): VoiceConfig {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEY_VOICE);
-      localStorage.removeItem(STORAGE_KEY_RATE);
-      localStorage.removeItem(STORAGE_KEY_PITCH);
-      localStorage.removeItem(STORAGE_KEY_VOLUME);
-    }
+    safeRemove(STORAGE_KEY_VOICE);
+    safeRemove(STORAGE_KEY_RATE);
+    safeRemove(STORAGE_KEY_PITCH);
+    safeRemove(STORAGE_KEY_VOLUME);
     this.notifyListeners();
     return DEFAULT_VOICE_CONFIG;
   }
@@ -187,77 +233,84 @@ class VoiceManagerClass {
   }
 
   /**
-   * Applies phonetic word replacements from the voice dictionary.
+   * Applies phonetic word replacements from the voice dictionary and strips Markdown
    */
   public applyPhonetics(text: string): string {
+    if (!text) return '';
     let result = text;
+
+    // Strip Markdown formatting tags so TTS doesn't read out symbols
+    result = result.replace(/\*\*([^*]+)\*\*/g, '$1'); // bold
+    result = result.replace(/\*([^*]+)\*/g, '$1'); // italic
+    result = result.replace(/`([^`]+)`/g, '$1'); // code
+    result = result.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // links
+    result = result.replace(/^#+\s+/gm, ''); // headings
+    result = result.replace(/^[-*+]\s+/gm, ''); // list items
+
     for (const [key, val] of Object.entries(VOICE_DICTIONARY)) {
-      const regex = new RegExp(`\\b${key}\\b`, 'g');
+      const regex = new RegExp(`\\b${key}\\b`, 'gi');
       result = result.replace(regex, val);
     }
-    return result;
+
+    return result.trim();
   }
 
   /**
-   * Helper to configure standard voice parameters on a SpeechSynthesisUtterance.
+   * Cleans text into small, readable speech chunks (max ~100 chars)
+   * Prevents browser speech synthesis truncation and memory cutoff bugs.
    */
-  private configureUtterance(
-    utt: SpeechSynthesisUtterance,
-    config: VoiceConfig,
-    targetVoice: SpeechSynthesisVoice | null
-  ): SpeechSynthesisUtterance {
-    utt.rate = config.rate;
-    utt.pitch = config.pitch;
-    utt.volume = config.volume;
-    if (targetVoice) {
-      utt.voice = targetVoice;
-    }
-    return utt;
-  }
+  public chunkText(text: string): string[] {
+    const cleaned = this.applyPhonetics(text);
+    if (!cleaned) return [];
 
-  /**
-   * Constructs direct SpeechSynthesisUtterance sequences with a minimum delay buffer between 'Creation' and 'al'.
-   */
-  private createUtteranceSequence(
-    text: string,
-    config: VoiceConfig,
-    targetVoice: SpeechSynthesisVoice | null
-  ): SpeechSynthesisUtterance[] {
-    const kreationalRegex = /\b(Kreational|kreational|Creation-al|creation-al)\b/i;
+    const MAX_CHUNK_LENGTH = 110;
 
-    if (!kreationalRegex.test(text)) {
-      const phoneticText = this.applyPhonetics(text);
-      const utt = new SpeechSynthesisUtterance(phoneticText);
-      this.configureUtterance(utt, config, targetVoice);
-      return [utt];
-    }
+    // Split first by sentences or linebreaks
+    const rawSentences = cleaned.split(/(?<=[.!?;\n])\s+/);
+    const chunks: string[] = [];
 
-    const tokens = text.split(/\b(Kreational|kreational|Creation-al|creation-al)\b/i);
-    const sequence: SpeechSynthesisUtterance[] = [];
+    for (const rawSentence of rawSentences) {
+      const sentence = rawSentence.trim();
+      if (!sentence) continue;
 
-    for (const token of tokens) {
-      if (!token) continue;
-
-      if (kreationalRegex.test(token)) {
-        // Direct SpeechSynthesisUtterance sequence with zero delay buffer between 'Creation' and 'al'
-        const uCreation = new SpeechSynthesisUtterance('Creation');
-        this.configureUtterance(uCreation, config, targetVoice);
-
-        const uAl = new SpeechSynthesisUtterance('al');
-        this.configureUtterance(uAl, config, targetVoice);
-
-        sequence.push(uCreation, uAl);
+      if (sentence.length <= MAX_CHUNK_LENGTH) {
+        chunks.push(sentence);
       } else {
-        const phoneticToken = this.applyPhonetics(token);
-        if (phoneticToken.trim()) {
-          const u = new SpeechSynthesisUtterance(phoneticToken);
-          this.configureUtterance(u, config, targetVoice);
-          sequence.push(u);
+        // Split longer sentence by clauses (comma, colon, dash)
+        const clauses = sentence.split(/(?<=[,:\-–—])\s+/);
+        let currentClauseGroup = '';
+
+        for (const clause of clauses) {
+          const trimmedClause = clause.trim();
+          if (!trimmedClause) continue;
+
+          if (trimmedClause.length > MAX_CHUNK_LENGTH) {
+            // Split by words if clause alone exceeds limit
+            const words = trimmedClause.split(/\s+/);
+            let wordGroup = '';
+            for (const word of words) {
+              if ((wordGroup + ' ' + word).trim().length <= MAX_CHUNK_LENGTH) {
+                wordGroup = (wordGroup + ' ' + word).trim();
+              } else {
+                if (wordGroup) chunks.push(wordGroup);
+                wordGroup = word;
+              }
+            }
+            if (wordGroup) chunks.push(wordGroup);
+          } else {
+            if ((currentClauseGroup + ' ' + trimmedClause).trim().length <= MAX_CHUNK_LENGTH) {
+              currentClauseGroup = (currentClauseGroup + ' ' + trimmedClause).trim();
+            } else {
+              if (currentClauseGroup) chunks.push(currentClauseGroup);
+              currentClauseGroup = trimmedClause;
+            }
+          }
         }
+        if (currentClauseGroup) chunks.push(currentClauseGroup);
       }
     }
 
-    return sequence.length > 0 ? sequence : [this.configureUtterance(new SpeechSynthesisUtterance(text), config, targetVoice)];
+    return chunks.length > 0 ? chunks : [cleaned];
   }
 
   /**
@@ -266,10 +319,49 @@ class VoiceManagerClass {
   public clearQueue(): void {
     this.queue = [];
     this.isProcessingQueue = false;
-    this.currentUtterances = [];
+    this.activeUtterances = [];
+    this.activeUtterance = null;
+    (window as any).__activeSpeechUtterances = [];
+    this.stopKeepAlive();
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {
+        // ignore
+      }
     }
+  }
+
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    // Chrome speech synthesis workaround for long sequences
+    this.keepAliveTimer = setInterval(() => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        if (window.speechSynthesis.speaking) {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        } else {
+          this.stopKeepAlive();
+        }
+      }
+    }, 3000);
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+  }
+
+  public isSpeaking(): boolean {
+    if (this.isProcessingQueue || this.activeUtterances.length > 0) return true;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      return window.speechSynthesis.speaking;
+    }
+    return false;
   }
 
   /**
@@ -327,70 +419,109 @@ class VoiceManagerClass {
         targetVoice = this.getBestEnglishVoice(allVoices);
       }
 
-      const utterances = this.createUtteranceSequence(item.text, config, targetVoice);
-      this.currentUtterances = utterances;
+      const textChunks = this.chunkText(item.text);
 
-      if (utterances.length === 0) {
+      if (textChunks.length === 0) {
         this.isProcessingQueue = false;
         item.options?.onEnd?.();
         this.processQueue();
         return;
       }
 
-      let started = false;
-      let completedCount = 0;
-      const totalCount = utterances.length;
+      // Create SpeechSynthesisUtterance for each chunk
+      const utterances: SpeechSynthesisUtterance[] = textChunks.map((chunkText) => {
+        const utt = new SpeechSynthesisUtterance(chunkText);
+        utt.rate = config.rate;
+        utt.pitch = config.pitch;
+        utt.volume = config.volume;
+        if (targetVoice) {
+          utt.voice = targetVoice;
+        }
+        return utt;
+      });
 
-      const finishItem = (err?: any) => {
-        if (!this.isProcessingQueue) return;
-        this.isProcessingQueue = false;
-        this.currentUtterances = [];
+      // Retain hard references to prevent garbage collection mid-utterance
+      this.activeUtterances = utterances;
+      (window as any).__activeSpeechUtterances = utterances;
 
-        if (err) {
-          item.options?.onError?.(err);
-        } else {
+      let currentChunkIndex = 0;
+      let hasStarted = false;
+
+      this.startKeepAlive();
+
+      const playNextChunk = () => {
+        if (currentChunkIndex >= utterances.length) {
+          this.stopKeepAlive();
+          this.activeUtterances = [];
+          this.activeUtterance = null;
+          (window as any).__activeSpeechUtterances = [];
+          this.isProcessingQueue = false;
           item.options?.onEnd?.();
+
+          setTimeout(() => {
+            this.processQueue();
+          }, 30);
+          return;
         }
 
-        // Trigger next message in queue with minimal delay
-        setTimeout(() => {
-          this.processQueue();
-        }, 10);
-      };
+        const currentUtt = utterances[currentChunkIndex];
+        this.activeUtterance = currentUtt;
 
-      // Queue all utterances in the sequence into native SpeechSynthesis
-      utterances.forEach((utt) => {
-        utt.onstart = () => {
-          if (!started) {
-            started = true;
+        currentUtt.onstart = () => {
+          if (!hasStarted) {
+            hasStarted = true;
             item.options?.onStart?.();
           }
         };
 
-        utt.onend = () => {
-          completedCount++;
-          if (completedCount >= totalCount) {
-            finishItem();
-          }
+        currentUtt.onend = () => {
+          currentChunkIndex++;
+          // 50ms async gap prevents Chromium/WebKit from dropping subsequent utterances
+          setTimeout(() => {
+            playNextChunk();
+          }, 50);
         };
 
-        utt.onerror = (e) => {
-          console.warn('[VoiceManager] Sequence utterance error:', e);
-          finishItem(e);
+        currentUtt.onerror = (err) => {
+          console.warn('[VoiceManager] Speech utterance error:', err);
+          currentChunkIndex++;
+          setTimeout(() => {
+            if (currentChunkIndex >= utterances.length) {
+              this.stopKeepAlive();
+              this.activeUtterances = [];
+              this.activeUtterance = null;
+              (window as any).__activeSpeechUtterances = [];
+              this.isProcessingQueue = false;
+              item.options?.onError?.(err);
+              setTimeout(() => this.processQueue(), 30);
+            } else {
+              playNextChunk();
+            }
+          }, 50);
         };
 
-        window.speechSynthesis.speak(utt);
-      });
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+
+        window.speechSynthesis.speak(currentUtt);
+      };
+
+      playNextChunk();
     } catch (err) {
       console.error('[VoiceManager] Failed to process queue item:', err);
+      this.stopKeepAlive();
       this.isProcessingQueue = false;
+      this.activeUtterances = [];
+      this.activeUtterance = null;
+      (window as any).__activeSpeechUtterances = [];
       item.options?.onError?.(err);
       this.processQueue();
     }
   }
 
   /**
-   * Speaks with an evil/sinister sounding voice (low pitch, slower rate) for anti-language warning.
+   * Speaks with an evil/sinister sounding voice for anti-language warning.
    */
   public speakEvil(
     text: string,

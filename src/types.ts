@@ -22,6 +22,16 @@ export interface TemporaryAccess {
   durationSeconds: number; // Duration in seconds
 }
 
+export interface UserCosmetics {
+  title?: string;
+  background?: string;
+  avatarFrame?: string;
+  customAvatarUrl?: string;
+  unlockedBackgrounds?: string[];
+  unlockedFrames?: string[];
+  unlockedTitles?: string[];
+}
+
 export interface User {
   id: string;
   username: string;
@@ -30,6 +40,17 @@ export interface User {
   purchasedTiers: TierId[];
   temporaryAccess: TemporaryAccess[];
   createdAt?: number;
+  krests?: number;
+  iconShards?: number;
+  dailyStreak?: number;
+  lastLoginDate?: string;
+  lastClaimedStreakDay?: number;
+  lastClaimedStreakDate?: string;
+  dailyQuestsData?: {
+    lastResetDate: string;
+    quests: Record<string, { progress: number; claimed: boolean }>;
+  };
+  cosmetics?: UserCosmetics;
 }
 
 export interface Game {

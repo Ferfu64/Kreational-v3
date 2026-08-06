@@ -3,6 +3,7 @@ import { Settings, X, Palette, Sliders, Check, Wifi, WifiOff, RefreshCw, Search,
 import { VoiceManager, VoiceConfig } from '../assistant/VoiceManager';
 import { useAssistant } from '../assistant/AssistantContext';
 import { subscribePwa, canInstallPwa, isStandalone, promptPwaInstall } from '../pwaManager';
+import { safeGet, safeSet } from '../utils/persistentStorage';
 
 const DownloadAppSection: React.FC = () => {
   const [canInstall, setCanInstall] = useState<boolean>(canInstallPwa());
@@ -349,8 +350,8 @@ const SleepWakeSettingsSection: React.FC = () => {
     // Fallback if rendered outside AssistantProvider
   }
 
-  const [localSleepWord, setLocalSleepWord] = useState(() => (typeof localStorage !== 'undefined' && localStorage.getItem('kreational_assistant_sleep_word')) || 'sleep');
-  const [localWakeWord, setLocalWakeWord] = useState(() => (typeof localStorage !== 'undefined' && localStorage.getItem('kreational_assistant_wake_word')) || 'wake up');
+  const [localSleepWord, setLocalSleepWord] = useState(() => safeGet('kreational_assistant_sleep_word') || 'sleep');
+  const [localWakeWord, setLocalWakeWord] = useState(() => safeGet('kreational_assistant_wake_word') || 'wake up');
 
   const sleepWord = assistantContext ? assistantContext.sleepWord : localSleepWord;
   const wakeWord = assistantContext ? assistantContext.wakeWord : localWakeWord;
@@ -360,9 +361,7 @@ const SleepWakeSettingsSection: React.FC = () => {
       assistantContext.setSleepWord(val);
     } else {
       setLocalSleepWord(val);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('kreational_assistant_sleep_word', val.trim() || 'sleep');
-      }
+      safeSet('kreational_assistant_sleep_word', val.trim() || 'sleep');
     }
   };
 
@@ -371,9 +370,7 @@ const SleepWakeSettingsSection: React.FC = () => {
       assistantContext.setWakeWord(val);
     } else {
       setLocalWakeWord(val);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('kreational_assistant_wake_word', val.trim() || 'wake up');
-      }
+      safeSet('kreational_assistant_wake_word', val.trim() || 'wake up');
     }
   };
 

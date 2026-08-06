@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Game, User } from '../types';
+import { safeGet, safeSet } from '../utils/persistentStorage';
 import { X, Maximize2, Minimize2, ShieldAlert, Clock, RefreshCw, Gamepad2, FileText, Check, Heart } from 'lucide-react';
 
 interface GameModalProps {
@@ -42,20 +43,20 @@ export const GameModal: React.FC<GameModalProps> = ({
     if (!game || !accessGranted) return;
     try {
       // 1. Record play history in LocalStorage
-      const historyRaw = localStorage.getItem('kreational_play_history');
+      const historyRaw = safeGet('kreational_play_history');
       const history = historyRaw ? JSON.parse(historyRaw) : [];
       const updatedHistory = [
         { id: game.id, title: game.title, tier: game.tier, playedAt: Date.now() },
         ...history.filter((h: any) => h.id !== game.id),
       ].slice(0, 30);
-      localStorage.setItem('kreational_play_history', JSON.stringify(updatedHistory));
+      safeSet('kreational_play_history', JSON.stringify(updatedHistory));
 
       // 2. Load game note from LocalStorage
-      const savedNote = localStorage.getItem(`kreational_game_note_${game.id}`);
+      const savedNote = safeGet(`kreational_game_note_${game.id}`);
       setGameNote(savedNote || '');
 
       // 3. Load favorite status from LocalStorage
-      const favsRaw = localStorage.getItem('kreational_favorites');
+      const favsRaw = safeGet('kreational_favorites');
       const favs: string[] = favsRaw ? JSON.parse(favsRaw) : [];
       setIsFavorite(favs.includes(game.id));
     } catch (err) {
@@ -67,7 +68,7 @@ export const GameModal: React.FC<GameModalProps> = ({
     setGameNote(text);
     if (!game) return;
     try {
-      localStorage.setItem(`kreational_game_note_${game.id}`, text);
+      safeSet(`kreational_game_note_${game.id}`, text);
       setNoteSaved(true);
       setTimeout(() => setNoteSaved(false), 2000);
     } catch (err) {
@@ -78,7 +79,7 @@ export const GameModal: React.FC<GameModalProps> = ({
   const toggleFavorite = () => {
     if (!game) return;
     try {
-      const favsRaw = localStorage.getItem('kreational_favorites');
+      const favsRaw = safeGet('kreational_favorites');
       const favs: string[] = favsRaw ? JSON.parse(favsRaw) : [];
       let updated: string[];
       if (favs.includes(game.id)) {
@@ -88,7 +89,7 @@ export const GameModal: React.FC<GameModalProps> = ({
         updated = [...favs, game.id];
         setIsFavorite(true);
       }
-      localStorage.setItem('kreational_favorites', JSON.stringify(updated));
+      safeSet('kreational_favorites', JSON.stringify(updated));
     } catch (err) {
       console.warn('Failed to update favorites in localStorage:', err);
     }

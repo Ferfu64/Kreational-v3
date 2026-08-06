@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tier, TierId } from '../types';
 import { Lock, Check, Sparkles, Key } from 'lucide-react';
+import { SFX } from '../utils/sfx';
 
 interface TierSelectorProps {
   tiers: Tier[];
@@ -137,7 +138,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
           const isSelected = selectedTierId === tier.id;
           const isUnlocked = isAdmin || userPurchasedTiers.includes(tier.id);
           const theme = TIER_THEMES[tier.id] || TIER_THEMES.bronze;
-          const isBlocked = tier.id === 'blocked';
+          const isAZGames = tier.id === 'blocked' || tier.id === 'azgames' || tier.name === 'AZGAMES';
 
           return (
             <div
@@ -145,15 +146,19 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
               key={tier.id}
               role="button"
               tabIndex={0}
-              onClick={() => onSelectTier(tier.id)}
+              onClick={() => {
+                SFX.playTierChange();
+                onSelectTier(tier.id);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
+                  SFX.playTierChange();
                   onSelectTier(tier.id);
                 }
               }}
               className={`relative flex flex-col items-center justify-between p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border text-left transition-all duration-300 group cursor-pointer backdrop-blur-xl shrink-0 min-w-[125px] sm:min-w-0 ${
-                isBlocked ? 'glitch-card bg-red-950/40 border-red-600/80 shadow-red-900/50' : ''
+                isAZGames ? 'glitch-card bg-red-950/40 border-red-600/80 shadow-red-900/50' : ''
               } ${
                 isSelected
                   ? `bg-white/[0.08] ${theme.border} ring-2 ${theme.activeRing} ring-offset-2 ring-offset-[#050505] scale-[1.02] ${theme.glow} shadow-xl`
@@ -161,8 +166,8 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
               }`}
             >
               <div className="w-full flex items-center justify-between mb-1.5">
-                <span className={`text-[10px] font-mono font-bold tracking-wider uppercase ${isBlocked ? 'glitch-text text-red-400' : theme.text}`}>
-                  {isBlocked ? 'TIER ???' : `TIER ${tier.displayOrder}`}
+                <span className={`text-[10px] font-mono font-bold tracking-wider uppercase ${isAZGames ? 'glitch-text text-red-400' : theme.text}`}>
+                  {isAZGames ? 'AZGAMES' : `TIER ${tier.displayOrder}`}
                 </span>
                 {isUnlocked ? (
                   <span className="p-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 backdrop-blur-md">
@@ -176,7 +181,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
               </div>
 
               <div className="w-full my-1">
-                <div className={`text-base font-bold tracking-tight font-mono ${isBlocked ? 'glitch-text text-red-400 font-black' : theme.text}`}>
+                <div className={`text-base font-bold tracking-tight font-mono ${isAZGames ? 'glitch-text text-red-400 font-black' : theme.text}`}>
                   {tier.name}
                 </div>
               </div>

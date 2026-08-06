@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Game, Tier, User } from '../types';
+import { safeGet, safeSet } from '../utils/persistentStorage';
 import { Lock, Clock, Key, Play, Heart, FileText, Sparkles, History, Search, X } from 'lucide-react';
 import { TIER_THEMES } from './TierSelector';
 
@@ -50,16 +51,16 @@ export const GameGrid: React.FC<GameGridProps> = ({
   // Sync favorites, recent history & settings from LocalStorage
   const loadLocalStorageData = () => {
     try {
-      const favsRaw = localStorage.getItem('kreational_favorites');
+      const favsRaw = safeGet('kreational_favorites');
       setFavorites(favsRaw ? JSON.parse(favsRaw) : []);
 
-      const historyRaw = localStorage.getItem('kreational_play_history');
+      const historyRaw = safeGet('kreational_play_history');
       if (historyRaw) {
         const historyList: Array<{ id: string }> = JSON.parse(historyRaw);
         setRecentGameIds(historyList.map((h) => h.id));
       }
 
-      const settingsRaw = localStorage.getItem('kreational_user_settings');
+      const settingsRaw = safeGet('kreational_user_settings');
       if (settingsRaw) {
         const parsedSettings = JSON.parse(settingsRaw);
         setEnableSearchBarLocal(parsedSettings.enableSearchBar !== false);
@@ -85,7 +86,7 @@ export const GameGrid: React.FC<GameGridProps> = ({
         updated = [...favorites, gameId];
       }
       setFavorites(updated);
-      localStorage.setItem('kreational_favorites', JSON.stringify(updated));
+      safeSet('kreational_favorites', JSON.stringify(updated));
     } catch (err) {
       console.warn('Failed to save favorite to localStorage:', err);
     }
@@ -268,7 +269,7 @@ export const GameGrid: React.FC<GameGridProps> = ({
             const gameTierOwned = isAdmin || (user.purchasedTiers || []).includes(game.tier);
             const canPlay = gameTierOwned || hasValidTempAccess;
             const isFav = favorites.includes(game.id);
-            const hasSavedNote = !!localStorage.getItem(`kreational_game_note_${game.id}`);
+            const hasSavedNote = !!safeGet(`kreational_game_note_${game.id}`);
             const gameTierTheme = TIER_THEMES[game.tier] || TIER_THEMES.bronze;
 
             return (

@@ -1,5 +1,6 @@
 import { Game } from '../types';
 import { DEFAULT_GAMES } from '../data/defaultGames';
+import { safeGet, safeSet } from '../utils/persistentStorage';
 
 const STORAGE_KEY = 'kreational_shared_games_module_v1';
 
@@ -35,7 +36,7 @@ class GamesModule {
 
     // 2. Load stored custom/uploaded games
     try {
-      const storedRaw = localStorage.getItem(STORAGE_KEY);
+      const storedRaw = safeGet(STORAGE_KEY);
       if (storedRaw) {
         const storedGames: Game[] = JSON.parse(storedRaw);
         storedGames.forEach((game) => {
@@ -92,7 +93,7 @@ class GamesModule {
     try {
       // Save all non-default or customized games to local storage
       const customGames = Array.from(this.gamesMap.values());
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(customGames));
+      safeSet(STORAGE_KEY, JSON.stringify(customGames));
     } catch (err) {
       console.warn('GamesModule failed to persist games:', err);
     }

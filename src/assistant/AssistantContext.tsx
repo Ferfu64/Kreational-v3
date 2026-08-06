@@ -19,6 +19,8 @@ import { processVoiceCommand } from './commands/commandProcessor';
 import { CommandProcessResult, CommandActionContext, CommandActionResult } from './commands/types';
 import { ArcadeContextManager } from './ArcadeContextManager';
 import { processBoardQuery } from './boardEngine';
+import { safeGet, safeSet, safeRemove } from '../utils/persistentStorage';
+import { VoiceManager } from './VoiceManager';
 
 interface AssistantContextType extends AssistantState {
   isControlsOpen: boolean;
@@ -99,35 +101,29 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
 
   // Custom Sleep + Wake Word State derived directly from userSettings object or standalone fallback
   const getDerivedSleepWord = (): string => {
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const settingsStr = localStorage.getItem('kreational_user_settings');
-        if (settingsStr) {
-          const parsed = JSON.parse(settingsStr);
-          if (parsed.assistantSleepWord) return parsed.assistantSleepWord;
-        }
-      } catch (e) {
-        // ignore JSON parse error
+    try {
+      const settingsStr = safeGet('kreational_user_settings');
+      if (settingsStr) {
+        const parsed = JSON.parse(settingsStr);
+        if (parsed.assistantSleepWord) return parsed.assistantSleepWord;
       }
-      return localStorage.getItem('kreational_assistant_sleep_word') || 'sleep';
+    } catch (e) {
+      // ignore JSON parse error
     }
-    return 'sleep';
+    return safeGet('kreational_assistant_sleep_word') || 'sleep';
   };
 
   const getDerivedWakeWord = (): string => {
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const settingsStr = localStorage.getItem('kreational_user_settings');
-        if (settingsStr) {
-          const parsed = JSON.parse(settingsStr);
-          if (parsed.assistantWakeWord) return parsed.assistantWakeWord;
-        }
-      } catch (e) {
-        // ignore JSON parse error
+    try {
+      const settingsStr = safeGet('kreational_user_settings');
+      if (settingsStr) {
+        const parsed = JSON.parse(settingsStr);
+        if (parsed.assistantWakeWord) return parsed.assistantWakeWord;
       }
-      return localStorage.getItem('kreational_assistant_wake_word') || 'wake up';
+    } catch (e) {
+      // ignore JSON parse error
     }
-    return 'wake up';
+    return safeGet('kreational_assistant_wake_word') || 'wake up';
   };
 
   const [sleepWord, setSleepWordState] = useState<string>(getDerivedSleepWord);
@@ -159,7 +155,7 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
 
   // Board Mode State (Non-Kreational queries enabled, Game launching disabled)
   const [isBoardMode, setIsBoardModeState] = useState<boolean>(() => {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('kreational_board_mode') === 'true';
+    return safeGet('kreational_board_mode') === 'true';
   });
   const isBoardModeRef = useRef<boolean>(isBoardMode);
 
@@ -170,9 +166,7 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   const setIsBoardMode = (open: boolean) => {
     setIsBoardModeState(open);
     isBoardModeRef.current = open;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('kreational_board_mode', open ? 'true' : 'false');
-    }
+    safeSet('kreational_board_mode', open ? 'true' : 'false');
   };
 
   const toggleBoardMode = () => {
@@ -199,17 +193,13 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   const setSleepWord = (word: string) => {
     const clean = word.trim() || 'sleep';
     setSleepWordState(clean);
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('kreational_assistant_sleep_word', clean);
-    }
+    safeSet('kreational_assistant_sleep_word', clean);
   };
 
   const setWakeWord = (word: string) => {
     const clean = word.trim() || 'wake up';
     setWakeWordState(clean);
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('kreational_assistant_wake_word', clean);
-    }
+    safeSet('kreational_assistant_wake_word', clean);
   };
 
   const isRecSupported = isSpeechRecognitionSupported();
@@ -261,17 +251,17 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   }, [enabledInSettings]);
 
   const startListening = useCallback(() => {
-    if (!isEnabled) return;
+    if (!isEnabled || isSpeakingRef.current || VoiceManager.isSpeaking()) return;
     isManuallyStoppedRef.current = false;
 
     if (micStatus !== 'granted') {
       requestMicrophonePermission().then((status) => {
         setMicStatus(status);
-        if (status === 'granted' && recognizerRef.current) {
+        if (status === 'granted' && recognizerRef.current && !isSpeakingRef.current && !VoiceManager.isSpeaking()) {
           recognizerRef.current.start();
         }
       });
-    } else if (recognizerRef.current) {
+    } else if (recognizerRef.current && !isSpeakingRef.current && !VoiceManager.isSpeaking()) {
       recognizerRef.current.start();
     }
   }, [isEnabled, micStatus]);
@@ -282,12 +272,20 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
         console.warn('[Kreational Assistant] Speech synthesis unavailable.');
         return;
       }
+      if (autoRestartTimerRef.current) {
+        clearTimeout(autoRestartTimerRef.current);
+        autoRestartTimerRef.current = null;
+      }
       setLastSpokenText(text);
       setEngineState('speaking');
       isSpeakingRef.current = true;
 
       // Temporarily pause recognition while assistant is speaking so it doesn't process its own voice
-      recognizerRef.current?.stop();
+      try {
+        recognizerRef.current?.stop();
+      } catch (e) {
+        // ignore
+      }
 
       synthesizerRef.current.speak(text, {
         onStart: () => {
@@ -298,14 +296,22 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
           isSpeakingRef.current = false;
           setEngineState((prev) => (prev === 'speaking' ? 'idle' : prev));
           if (isEnabled && !isManuallyStoppedRef.current) {
-            startListening();
+            setTimeout(() => {
+              if (!isSpeakingRef.current && !VoiceManager.isSpeaking()) {
+                startListening();
+              }
+            }, 250);
           }
         },
         onError: () => {
           isSpeakingRef.current = false;
           setEngineState('idle');
           if (isEnabled && !isManuallyStoppedRef.current) {
-            startListening();
+            setTimeout(() => {
+              if (!isSpeakingRef.current && !VoiceManager.isSpeaking()) {
+                startListening();
+              }
+            }, 250);
           }
         },
       });
@@ -317,14 +323,14 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   useEffect(() => {
     if (isEnabled && micStatus === 'granted' && !hasWelcomedRef.current) {
       hasWelcomedRef.current = true;
-      const hasInteracted = localStorage.getItem('kreational_assistant_has_interacted');
+      const hasInteracted = safeGet('kreational_assistant_has_interacted');
       const username = user?.username || user?.displayName;
 
       let greeting = '';
       if (!hasInteracted) {
         greeting = "Welcome to Kreational. I'm your arcade assistant. Say 'What can you do?' to learn my commands.";
         try {
-          localStorage.setItem('kreational_assistant_has_interacted', 'true');
+          safeSet('kreational_assistant_has_interacted', 'true');
         } catch (e) {
           console.warn('Failed to record assistant interaction:', e);
         }

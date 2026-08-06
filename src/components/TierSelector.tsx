@@ -96,7 +96,7 @@ export const TIER_THEMES: Record<
     glow: 'shadow-violet-500/30',
   },
   blocked: {
-    name: 'Blocked',
+    name: 'AZGAMES',
     bgGradient: 'from-stone-950/90 via-red-950/70 to-slate-900',
     border: 'border-red-600/80',
     text: 'text-red-400',

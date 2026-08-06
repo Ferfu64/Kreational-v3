@@ -35,7 +35,7 @@ const INITIAL_TIERS: Tier[] = [
   { id: 'legendary', name: 'Legendary', displayOrder: 6 },
   { id: 'master', name: 'Master', displayOrder: 7 },
   { id: 'pro', name: 'Pro', displayOrder: 8 },
-  { id: 'blocked', name: 'Blocked', displayOrder: 99 },
+  { id: 'blocked', name: 'AZGAMES', displayOrder: 99 },
 ];
 
 export default function App() {

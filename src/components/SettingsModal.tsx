@@ -1,7 +1,119 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Palette, Sliders, Check, Wifi, WifiOff, RefreshCw, Search, Bot, Volume2, Play, RotateCcw, Moon, Zap } from 'lucide-react';
+import { Settings, X, Palette, Sliders, Check, Wifi, WifiOff, RefreshCw, Search, Bot, Volume2, Play, RotateCcw, Moon, Zap, Download, Smartphone, CheckCircle2, Sparkles } from 'lucide-react';
 import { VoiceManager, VoiceConfig } from '../assistant/VoiceManager';
 import { useAssistant } from '../assistant/AssistantContext';
+import { subscribePwa, canInstallPwa, isStandalone, promptPwaInstall } from '../pwaManager';
+
+const DownloadAppSection: React.FC = () => {
+  const [canInstall, setCanInstall] = useState<boolean>(canInstallPwa());
+  const [installed, setInstalled] = useState<boolean>(isStandalone());
+  const [installing, setInstalling] = useState<boolean>(false);
+  const [showInstructions, setShowInstructions] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsubscribe = subscribePwa(() => {
+      setCanInstall(canInstallPwa());
+      setInstalled(isStandalone());
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleInstallClick = async () => {
+    setInstalling(true);
+    try {
+      const outcome = await promptPwaInstall();
+      if (outcome) {
+        setInstalled(true);
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3.5 p-4 rounded-xl border border-purple-500/30 bg-purple-500/[0.03] backdrop-blur-md">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-mono font-bold uppercase text-slate-200 flex items-center gap-2">
+          <Smartphone className="w-4 h-4 text-purple-400" />
+          <span>Download as APP (Mobile & Desktop)</span>
+        </label>
+        {installed ? (
+          <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            <span>Installed as App</span>
+          </span>
+        ) : (
+          <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-950/60 border border-purple-500/40 px-2.5 py-1 rounded-full">
+            PWA Ready
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-slate-300 leading-relaxed">
+        Install Kreational directly to your mobile home screen or desktop application list for instant offline play, fast performance, and full-screen arcade gaming!
+      </p>
+
+      {/* Main Install Action */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+        {canInstall && !installed && (
+          <button
+            type="button"
+            onClick={handleInstallClick}
+            disabled={installing}
+            className="flex-1 py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-purple-600/30 active:scale-95 disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            <span>{installing ? 'Opening Prompt...' : 'Install Kreational App'}</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setShowInstructions(!showInstructions)}
+          className="py-2.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-mono text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+        >
+          <span>{showInstructions ? 'Hide Instructions' : 'Mobile Install Guide'}</span>
+        </button>
+      </div>
+
+      {/* Step by Step Instructions */}
+      {(showInstructions || (!canInstall && !installed)) && (
+        <div className="mt-2 p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-3 text-xs text-slate-300 font-sans animate-fadeIn">
+          <div className="font-mono font-bold text-[11px] text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>How to install on Mobile Devices:</span>
+          </div>
+
+          <div className="space-y-2 text-[11px] leading-relaxed">
+            <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+              <span className="font-bold text-white block mb-0.5">📱 iOS (iPhone / iPad Safari):</span>
+              1. Tap the <strong className="text-cyan-300">Share</strong> button in Safari toolbar.<br />
+              2. Scroll down and tap <strong className="text-cyan-300">"Add to Home Screen"</strong>.<br />
+              3. Tap <strong className="text-cyan-300">Add</strong> to complete installation.
+            </div>
+
+            <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+              <span className="font-bold text-white block mb-0.5">🤖 Android (Chrome / Firefox / Edge):</span>
+              1. Tap the <strong className="text-purple-300">Menu (⋮)</strong> icon in top right.<br />
+              2. Select <strong className="text-purple-300">"Install app"</strong> or <strong className="text-purple-300">"Add to Home screen"</strong>.<br />
+              3. Confirm installation prompt.
+            </div>
+
+            <div className="p-2 rounded-lg bg-white/5 border border-white/5">
+              <span className="font-bold text-white block mb-0.5">💻 Desktop (Chrome / Edge / Brave):</span>
+              Click the <strong className="text-emerald-300">Install icon</strong> in your browser address bar or click the button above.
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-purple-500/20">
+        <span>Offline Service Worker: Active</span>
+        <span className="text-purple-300">Lighthouse PWA Compliant</span>
+      </div>
+    </div>
+  );
+};
 
 export interface UserSettings {
   theme: 'cyber-void' | 'obsidian-matrix' | 'amethyst-night' | 'emerald-synth' | 'sunset-crimson';
@@ -386,6 +498,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
           )}
         </div>
+
+        {/* Download as APP (PWA Installation Section) */}
+        <DownloadAppSection />
 
         {/* Theme Preset Selection */}
         <div className="space-y-3">

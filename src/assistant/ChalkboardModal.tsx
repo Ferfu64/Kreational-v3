@@ -144,7 +144,7 @@ export const ChalkboardModal: React.FC = () => {
                 Welcome to Kreational Board Mode!
               </p>
               <p className="font-serif text-xs sm:text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
-                Ask any math problem (e.g. <span className="text-yellow-100">"What is 144 / 12?"</span>), request a joke, or ask general questions. Anything you ask or say will be written here in chalk!
+                Ask any math problem (e.g. <span className="text-yellow-100">"What is 144 / 12?"</span> or <span className="text-yellow-100">"15% of 200"</span>), or ask for a joke (e.g. <span className="text-yellow-100">"Tell me a joke"</span>). Answers are generated locally!
               </p>
               <p className="font-mono text-[11px] text-emerald-300/80">
                 Say <span className="underline">"close board"</span> anytime to return to normal game mode.

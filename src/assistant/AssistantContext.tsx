@@ -18,6 +18,7 @@ import {
 import { processVoiceCommand } from './commands/commandProcessor';
 import { CommandProcessResult, CommandActionContext, CommandActionResult } from './commands/types';
 import { ArcadeContextManager } from './ArcadeContextManager';
+import { processBoardQuery } from './boardEngine';
 
 interface AssistantContextType extends AssistantState {
   isControlsOpen: boolean;
@@ -564,53 +565,17 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
           }
         }
 
-        // Process non-Kreational questions (math, jokes, general knowledge) via Gemini endpoint
-        try {
-          const response = await fetch('/api/assistant/general-query', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              prompt: cleanInput,
-              username: user?.username || user?.displayName,
-            }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            const answer = data.answer || 'I answered your request.';
-            addBoardEntry(cleanInput, answer);
-            setLastCommandResponse(answer);
-            speakText(answer);
-            return {
-              commandId: 'board_mode_general_query',
-              matchedPhrase: cleanInput,
-              responseText: answer,
-              success: true,
-            };
-          } else {
-            const errData = await response.json().catch(() => ({}));
-            const failMsg = errData.error || "I couldn't complete that query right now.";
-            setLastCommandResponse(failMsg);
-            speakText(failMsg);
-            return {
-              commandId: 'general_query_failed',
-              matchedPhrase: cleanInput,
-              responseText: failMsg,
-              success: false,
-            };
-          }
-        } catch (queryErr) {
-          console.error('General query error in AssistantContext:', queryErr);
-          const failMsg = 'Sorry, I had trouble processing your question.';
-          setLastCommandResponse(failMsg);
-          speakText(failMsg);
-          return {
-            commandId: 'general_query_error',
-            matchedPhrase: cleanInput,
-            responseText: failMsg,
-            success: false,
-          };
-        }
+        // Process math calculations and jokes via local Board Engine (No external AI/Gemini needed)
+        const answer = processBoardQuery(cleanInput);
+        addBoardEntry(cleanInput, answer);
+        setLastCommandResponse(answer);
+        speakText(answer);
+        return {
+          commandId: 'board_mode_local_query',
+          matchedPhrase: cleanInput,
+          responseText: answer,
+          success: true,
+        };
       }
 
       // Action Context Setup

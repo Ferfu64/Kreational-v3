@@ -306,7 +306,7 @@ export function getHighestBadgeTitle(user: User): { name: string; color: string;
   }
 
   const purchased = user.purchasedTiers || [];
-  if (purchased.includes('blocked')) {
+  if (purchased.includes('azgames')) {
     return { name: 'AZGAMES VIP', color: 'text-rose-400 border-rose-500/60 bg-rose-950/40', icon: '☣️' };
   }
   if (purchased.includes('pro')) {

@@ -7,7 +7,7 @@ export type TierId =
   | 'legendary'
   | 'master'
   | 'pro'
-  | 'blocked';
+  | 'azgames';
 
 export interface Tier {
   id: TierId;
@@ -51,6 +51,7 @@ export interface User {
     quests: Record<string, { progress: number; claimed: boolean }>;
   };
   cosmetics?: UserCosmetics;
+  datastoreBackup?: string;
 }
 
 export interface Game {

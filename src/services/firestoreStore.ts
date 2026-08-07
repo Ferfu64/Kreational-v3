@@ -174,6 +174,67 @@ export async function createUserAccount(userObj: User, secretWordStr: string): P
   }
 }
 
+// DATASTORE EXPORT & IMPORT BACKUP SYSTEM
+export function generateDatastoreSnapshot(user: User): string {
+  try {
+    const keysToBackup = [
+      'kreational_user',
+      'favorite_games',
+      'recent_games',
+      'kreational_sound_effects',
+      'kreational_bg_music',
+      'kreational_voice_assistant',
+      'game_history',
+    ];
+    const snapshotData: Record<string, string | null> = {};
+    keysToBackup.forEach((key) => {
+      snapshotData[key] = safeGet(key);
+    });
+    snapshotData['_user_state'] = JSON.stringify(user);
+    return JSON.stringify(snapshotData);
+  } catch (err) {
+    console.warn('Failed to generate datastore snapshot:', err);
+    return '';
+  }
+}
+
+export function applyDatastoreSnapshot(snapshotStr: string | undefined): boolean {
+  if (!snapshotStr || snapshotStr.trim() === '') return false;
+  try {
+    const parsed = JSON.parse(snapshotStr);
+    if (typeof parsed === 'object' && parsed !== null) {
+      Object.keys(parsed).forEach((key) => {
+        if (key !== '_user_state' && typeof parsed[key] === 'string') {
+          safeSet(key, parsed[key] as string);
+        }
+      });
+      return true;
+    }
+  } catch (err) {
+    console.warn('Failed to apply datastore snapshot:', err);
+  }
+  return false;
+}
+
+export async function saveFullUserAccountToFirestore(updatedUser: User): Promise<User> {
+  const secretWord = updatedUser.secretWord || '';
+  const accountRecord: UserAccountRecord = {
+    user: updatedUser,
+    secretWord,
+  };
+
+  addLocalAccount(updatedUser, secretWord);
+
+  try {
+    const docRef = doc(db, USERS_COLLECTION, updatedUser.id);
+    await setDoc(docRef, accountRecord, { merge: true });
+  } catch (err) {
+    console.warn('Firestore save full user account failed:', err);
+  }
+
+  return updatedUser;
+}
+
 export async function updateUserAccount(
   userId: string,
   updates: { username?: string; secretWord?: string; purchasedTiers?: TierId[]; removeAllAccess?: boolean }

@@ -19,7 +19,11 @@ import {
   KreditGainAnimation,
   KreditGainEvent,
 } from './components/KreditGainAnimation';
-import { recordGamePlayedInQuests } from './utils/questManager';
+import {
+  recordGamePlayedInQuests,
+  recordOnlineTimeMinutesInQuests,
+  recordGameTimeMinutesInQuests,
+} from './utils/questManager';
 import { SFX } from './utils/sfx';
 import { DEFAULT_GAMES } from './data/defaultGames';
 import { KREATOR_ADMIN_USER } from './utils/localAuth';
@@ -30,6 +34,9 @@ import {
   fetchAllRequestsStore,
   fetchAllUsers,
   updateUserAccount,
+  saveFullUserAccountToFirestore,
+  generateDatastoreSnapshot,
+  applyDatastoreSnapshot,
 } from './services/firestoreStore';
 import { AssistantProvider } from './assistant/AssistantContext';
 import { AssistantFloatingButton } from './assistant/AssistantFloatingButton';
@@ -47,7 +54,7 @@ const INITIAL_TIERS: Tier[] = [
   { id: 'legendary', name: 'Legendary', displayOrder: 6 },
   { id: 'master', name: 'Master', displayOrder: 7 },
   { id: 'pro', name: 'Pro', displayOrder: 8 },
-  { id: 'blocked', name: 'AZGAMES', displayOrder: 99 },
+  { id: 'azgames', name: 'AZGAMES', displayOrder: 99 },
 ];
 
 export default function App() {
@@ -56,6 +63,14 @@ export default function App() {
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [kreditGainEvents, setKreditGainEvents] = useState<KreditGainEvent[]>([]);
+  const [playingGame, setPlayingGame] = useState<Game | null>(null);
+
+  // Refs for background intervals and beforeunload handlers
+  const userRef = React.useRef<User | null>(null);
+  userRef.current = user;
+
+  const playingGameRef = React.useRef<Game | null>(null);
+  playingGameRef.current = playingGame;
 
   const handleTriggerKreditGain = (amount: number, sourceX?: number, sourceY?: number) => {
     SFX.playCoin();
@@ -72,24 +87,29 @@ export default function App() {
     setKreditGainEvents((prev) => prev.filter((e) => e.id !== id));
   };
 
-  // Passive Krests earning: 1 Krest every 1 minute active on site
+  // Passive Krests earning: 2 Krests every 1 minute active on site + quest progression
   useEffect(() => {
     if (!user) return;
 
     const interval = setInterval(() => {
       setUser((currentUser) => {
         if (!currentUser) return null;
-        const updatedKrests = (currentUser.krests || 0) + 1;
-        const updatedUser: User = {
+        let updatedUser: User = {
           ...currentUser,
-          krests: updatedKrests,
+          krests: (currentUser.krests || 0) + 2,
         };
+
+        // Record online time quest progress (+1 minute)
+        updatedUser = recordOnlineTimeMinutesInQuests(updatedUser, 1);
+
+        // Record game played time quest progress (+1 minute if active)
+        if (playingGameRef.current) {
+          updatedUser = recordGameTimeMinutesInQuests(updatedUser, 1);
+        }
+
         safeSet('kreational_user', JSON.stringify(updatedUser));
-        updateUserAccount(updatedUser.id, {
-          username: updatedUser.username,
-          purchasedTiers: updatedUser.purchasedTiers,
-        }).catch(() => {});
-        handleTriggerKreditGain(1);
+        saveFullUserAccountToFirestore(updatedUser).catch(() => {});
+        handleTriggerKreditGain(2);
         return updatedUser;
       });
     }, 60000);
@@ -130,7 +150,6 @@ export default function App() {
   };
 
   // Modals & Panels
-  const [playingGame, setPlayingGame] = useState<Game | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
 
@@ -180,11 +199,24 @@ export default function App() {
   const handleUpdateUser = (updated: User) => {
     setUser(updated);
     safeSet('kreational_user', JSON.stringify(updated));
-    updateUserAccount(updated.id, {
-      username: updated.username,
-      purchasedTiers: updated.purchasedTiers,
-    }).catch(() => {});
+    saveFullUserAccountToFirestore(updated).catch(() => {});
   };
+
+  // Auto-backup datastore on beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (userRef.current) {
+        const snapshot = generateDatastoreSnapshot(userRef.current);
+        const userWithBackup: User = {
+          ...userRef.current,
+          datastoreBackup: snapshot,
+        };
+        saveFullUserAccountToFirestore(userWithBackup).catch(() => {});
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // Restore Session
   useEffect(() => {
@@ -197,6 +229,11 @@ export default function App() {
       try {
         const parsed: User = JSON.parse(storedUser);
         const { updatedUser } = normalizeUserWithProfile(parsed);
+
+        if (parsed.datastoreBackup) {
+          applyDatastoreSnapshot(parsed.datastoreBackup);
+        }
+
         setUser(updatedUser);
         setToken(storedToken);
 
@@ -206,9 +243,13 @@ export default function App() {
             (u) => u.id === parsed.id || u.username.toLowerCase() === parsed.username.toLowerCase()
           );
           if (match) {
+            if (match.datastoreBackup) {
+              applyDatastoreSnapshot(match.datastoreBackup);
+            }
             const { updatedUser: freshUser } = normalizeUserWithProfile(match);
             setUser(freshUser);
             safeSet('kreational_user', JSON.stringify(freshUser));
+            saveFullUserAccountToFirestore(freshUser).catch(() => {});
           }
         }).catch(console.error);
       } catch (err) {
@@ -258,11 +299,15 @@ export default function App() {
 
   // Handle Login Success
   const handleLoginSuccess = (newUser: User, newToken: string) => {
+    if (newUser.datastoreBackup) {
+      applyDatastoreSnapshot(newUser.datastoreBackup);
+    }
     const { updatedUser } = normalizeUserWithProfile(newUser);
     setUser(updatedUser);
     setToken(newToken);
     safeSet('kreational_user', JSON.stringify(updatedUser));
     safeSet('kreational_token', newToken);
+    saveFullUserAccountToFirestore(updatedUser).catch(() => {});
   };
 
   // Global "Override" typing bypass listener when not focused in an input box
@@ -292,6 +337,14 @@ export default function App() {
 
   // Handle Logout
   const handleLogout = () => {
+    if (userRef.current) {
+      const snapshot = generateDatastoreSnapshot(userRef.current);
+      const userWithBackup: User = {
+        ...userRef.current,
+        datastoreBackup: snapshot,
+      };
+      saveFullUserAccountToFirestore(userWithBackup).catch(() => {});
+    }
     setUser(null);
     setToken(null);
     safeRemove('kreational_user');

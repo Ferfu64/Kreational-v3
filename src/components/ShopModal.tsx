@@ -107,7 +107,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const activeQuests = getActiveQuestsForUser(user);
   const availableClaimCount = activeQuests.filter((q) => q.completed && !q.claimed).length;
 
-  const handleClaimQuest = (questId: 'login_today' | 'play_5_games' | 'open_krate') => {
+  const handleClaimQuest = (questId: any) => {
     const { updatedUser, rewardKrests } = claimQuestRewardInQuests(user, questId);
     if (rewardKrests > 0) {
       SFX.playCoin();
@@ -148,8 +148,8 @@ export const ShopModal: React.FC<ShopModalProps> = ({
     let unlockedAZGAMES = false;
     let purchasedTiers = [...(user.purchasedTiers || [])];
     if (krate.id === 'gold' && Math.random() < 0.05) {
-      if (!purchasedTiers.includes('blocked')) {
-        purchasedTiers.push('blocked');
+      if (!purchasedTiers.includes('azgames')) {
+        purchasedTiers.push('azgames');
         unlockedAZGAMES = true;
       }
     }

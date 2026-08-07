@@ -96,7 +96,7 @@ export const TIER_THEMES: Record<
     badgeBg: 'bg-violet-950 text-violet-200 border-violet-800',
     glow: 'shadow-violet-500/30',
   },
-  blocked: {
+  azgames: {
     name: 'AZGAMES',
     bgGradient: 'from-stone-950/90 via-red-950/70 to-slate-900',
     border: 'border-red-600/80',
@@ -115,10 +115,10 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
   isAdmin,
   onRequestTierAccess,
 }) => {
-  // Hidden by default: 'blocked' tier only shown if user is Admin OR has explicit access
+  // Hidden by default: 'azgames' tier only shown if user is Admin OR has explicit access
   const visibleTiers = tiers.filter((tier) => {
-    if (tier.id === 'blocked') {
-      return isAdmin || userPurchasedTiers.includes('blocked');
+    if (tier.id === 'azgames' || tier.id === ('blocked' as any)) {
+      return isAdmin || userPurchasedTiers.includes('azgames') || userPurchasedTiers.includes('blocked' as any);
     }
     return true;
   });
@@ -138,7 +138,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
           const isSelected = selectedTierId === tier.id;
           const isUnlocked = isAdmin || userPurchasedTiers.includes(tier.id);
           const theme = TIER_THEMES[tier.id] || TIER_THEMES.bronze;
-          const isAZGames = tier.id === 'blocked' || tier.id === 'azgames' || tier.name === 'AZGAMES';
+          const isAZGames = tier.id === 'azgames' || tier.name === 'AZGAMES';
 
           return (
             <div

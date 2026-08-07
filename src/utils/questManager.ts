@@ -1,13 +1,22 @@
 import { User } from '../types';
 import { getTodayDateString } from './userProfile';
 
+export type QuestId =
+  | 'login_today'
+  | 'play_5_games'
+  | 'open_krate'
+  | 'play_5_mins'
+  | 'play_10_mins'
+  | 'online_30_mins'
+  | 'open_10_games';
+
 export interface QuestDef {
-  id: 'login_today' | 'play_5_games' | 'open_krate';
+  id: QuestId;
   title: string;
   description: string;
   rewardKrests: number;
   icon: string;
-  targetProgress: number;
+  targetProgress: number; // e.g. 1, 5, 10, 30
 }
 
 export const QUEST_CATALOG: QuestDef[] = [
@@ -22,7 +31,7 @@ export const QUEST_CATALOG: QuestDef[] = [
   {
     id: 'play_5_games',
     title: 'Gamer Extraordinaire',
-    description: 'Play 5 games across any tier',
+    description: 'Play 5 different game sessions',
     rewardKrests: 50,
     icon: '🎮',
     targetProgress: 5,
@@ -34,6 +43,38 @@ export const QUEST_CATALOG: QuestDef[] = [
     rewardKrests: 25,
     icon: '📦',
     targetProgress: 1,
+  },
+  {
+    id: 'play_5_mins',
+    title: '5-Min Marathon',
+    description: 'Play a game for 5 minutes continuously',
+    rewardKrests: 45,
+    icon: '⏱️',
+    targetProgress: 5,
+  },
+  {
+    id: 'play_10_mins',
+    title: '10-Min Deep Dive',
+    description: 'Play a game for 10 minutes continuously',
+    rewardKrests: 90,
+    icon: '⏳',
+    targetProgress: 10,
+  },
+  {
+    id: 'online_30_mins',
+    title: 'Dedicated Kreator',
+    description: 'Stay active online for 30 minutes',
+    rewardKrests: 120,
+    icon: '🔥',
+    targetProgress: 30,
+  },
+  {
+    id: 'open_10_games',
+    title: 'Arcade Explorer',
+    description: 'Launch and open 10 game sessions',
+    rewardKrests: 75,
+    icon: '🕹️',
+    targetProgress: 10,
   },
 ];
 
@@ -78,7 +119,7 @@ export function recordGamePlayedInQuests(user: User): User {
   const questMap: Record<string, { progress: number; claimed: boolean }> = {};
   activeQuests.forEach((q) => {
     let p = q.currentProgress;
-    if (q.def.id === 'play_5_games') {
+    if (q.def.id === 'play_5_games' || q.def.id === 'open_10_games') {
       p = Math.min(q.def.targetProgress, p + 1);
     }
     questMap[q.def.id] = {
@@ -121,9 +162,59 @@ export function recordKrateOpenedInQuests(user: User): User {
   };
 }
 
+export function recordGameTimeMinutesInQuests(user: User, elapsedMinutes: number): User {
+  const today = getTodayDateString();
+  const activeQuests = getActiveQuestsForUser(user);
+
+  const questMap: Record<string, { progress: number; claimed: boolean }> = {};
+  activeQuests.forEach((q) => {
+    let p = q.currentProgress;
+    if (q.def.id === 'play_5_mins' || q.def.id === 'play_10_mins') {
+      p = Math.min(q.def.targetProgress, p + elapsedMinutes);
+    }
+    questMap[q.def.id] = {
+      progress: p,
+      claimed: q.claimed,
+    };
+  });
+
+  return {
+    ...user,
+    dailyQuestsData: {
+      lastResetDate: today,
+      quests: questMap,
+    },
+  };
+}
+
+export function recordOnlineTimeMinutesInQuests(user: User, elapsedMinutes: number): User {
+  const today = getTodayDateString();
+  const activeQuests = getActiveQuestsForUser(user);
+
+  const questMap: Record<string, { progress: number; claimed: boolean }> = {};
+  activeQuests.forEach((q) => {
+    let p = q.currentProgress;
+    if (q.def.id === 'online_30_mins') {
+      p = Math.min(q.def.targetProgress, p + elapsedMinutes);
+    }
+    questMap[q.def.id] = {
+      progress: p,
+      claimed: q.claimed,
+    };
+  });
+
+  return {
+    ...user,
+    dailyQuestsData: {
+      lastResetDate: today,
+      quests: questMap,
+    },
+  };
+}
+
 export function claimQuestRewardInQuests(
   user: User,
-  questId: 'login_today' | 'play_5_games' | 'open_krate'
+  questId: QuestId
 ): { updatedUser: User; rewardKrests: number } {
   const today = getTodayDateString();
   const activeQuests = getActiveQuestsForUser(user);

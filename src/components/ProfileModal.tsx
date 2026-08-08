@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { User, UserCosmetics } from '../types';
+import { User, UserCosmetics, ItemInstance } from '../types';
+import { InventoryView } from './InventoryView';
 import {
   COSMETICS_CATALOG,
   CosmeticOption,
@@ -33,6 +34,7 @@ interface ProfileModalProps {
   onUpdateUser: (updatedUser: User) => void;
   onClose: () => void;
   onOpenShop: () => void;
+  onNavigateToMarketplace?: () => void;
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -40,9 +42,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   onUpdateUser,
   onClose,
   onOpenShop,
+  onNavigateToMarketplace,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'streak' | 'backgrounds' | 'frames' | 'titles'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'inventory' | 'streak' | 'backgrounds' | 'frames' | 'titles'>('overview');
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [streakClaimMessage, setStreakClaimMessage] = useState<string | null>(null);
   const [pendingRawImage, setPendingRawImage] = useState<string | null>(null);
@@ -283,6 +286,26 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             <button
               onClick={() => {
                 SFX.playClick();
+                setActiveTab('inventory');
+              }}
+              className={`px-3.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'inventory'
+                  ? 'bg-purple-600/30 text-white border-t border-x border-purple-500/40'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Gift className="w-4 h-4 text-purple-400" />
+              <span>Inventory</span>
+              {user.inventory && user.inventory.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-mono">
+                  {user.inventory.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                SFX.playClick();
                 setActiveTab('streak');
               }}
               className={`px-3.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -362,6 +385,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <span>{streakClaimMessage}</span>
             </div>
+          )}
+
+          {activeTab === 'inventory' && (
+            <InventoryView
+              user={user}
+              onUpdateUser={onUpdateUser}
+              onNavigateToMarketplace={() => {
+                onClose();
+                if (onNavigateToMarketplace) onNavigateToMarketplace();
+              }}
+            />
           )}
 
           {activeTab === 'overview' && (

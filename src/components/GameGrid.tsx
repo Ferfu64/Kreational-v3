@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Game, Tier, User } from '../types';
 import { safeGet, safeSet } from '../utils/persistentStorage';
+import { saveFullUserAccountToFirestore } from '../services/firestoreStore';
 import { Lock, Clock, Key, Play, Heart, FileText, Sparkles, History, Search, X } from 'lucide-react';
 import { TIER_THEMES } from './TierSelector';
 
@@ -48,33 +49,29 @@ export const GameGrid: React.FC<GameGridProps> = ({
     return () => clearInterval(timer);
   }, [serverTimeOffset]);
 
-  // Sync favorites, recent history & settings from LocalStorage
-  const loadLocalStorageData = () => {
-    try {
-      const favsRaw = safeGet('kreational_favorites');
-      setFavorites(favsRaw ? JSON.parse(favsRaw) : []);
-
-      const historyRaw = safeGet('kreational_play_history');
-      if (historyRaw) {
-        const historyList: Array<{ id: string }> = JSON.parse(historyRaw);
-        setRecentGameIds(historyList.map((h) => h.id));
-      }
-
-      const settingsRaw = safeGet('kreational_user_settings');
-      if (settingsRaw) {
-        const parsedSettings = JSON.parse(settingsRaw);
-        setEnableSearchBarLocal(parsedSettings.enableSearchBar !== false);
-      }
-    } catch (err) {
-      console.warn('Failed to load local storage in GameGrid:', err);
-    }
-  };
-
+  // Sync favorites & recent history from user profile
   useEffect(() => {
-    loadLocalStorageData();
-    window.addEventListener('storage', loadLocalStorageData);
-    return () => window.removeEventListener('storage', loadLocalStorageData);
-  }, []);
+    if (user.favoriteGames) {
+      setFavorites(user.favoriteGames);
+    } else {
+      try {
+        const favsRaw = safeGet('kreational_favorites');
+        setFavorites(favsRaw ? JSON.parse(favsRaw) : []);
+      } catch (e) {}
+    }
+
+    if (user.playHistory) {
+      setRecentGameIds(user.playHistory);
+    } else {
+      try {
+        const historyRaw = safeGet('kreational_play_history');
+        if (historyRaw) {
+          const historyList: Array<{ id: string }> = JSON.parse(historyRaw);
+          setRecentGameIds(historyList.map((h) => h.id));
+        }
+      } catch (e) {}
+    }
+  }, [user]);
 
   const toggleFavorite = (gameId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -87,8 +84,11 @@ export const GameGrid: React.FC<GameGridProps> = ({
       }
       setFavorites(updated);
       safeSet('kreational_favorites', JSON.stringify(updated));
+
+      const updatedUser = { ...user, favoriteGames: updated };
+      saveFullUserAccountToFirestore(updatedUser).catch(() => {});
     } catch (err) {
-      console.warn('Failed to save favorite to localStorage:', err);
+      console.warn('Failed to save favorite:', err);
     }
   };
 

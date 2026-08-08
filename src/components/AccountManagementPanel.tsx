@@ -33,6 +33,7 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
   const [editName, setEditName] = useState('');
   const [editSecretWord, setEditSecretWord] = useState('');
   const [editTiers, setEditTiers] = useState<TierId[]>([]);
+  const [editKrests, setEditKrests] = useState<number>(0);
   const [updating, setUpdating] = useState(false);
 
   const fetchAccounts = async () => {
@@ -88,11 +89,24 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
     setCreating(false);
   };
 
+  const handleGrantKrests = async (targetUser: User, amount: number) => {
+    const current = targetUser.krests || 0;
+    const updatedKrests = Math.max(0, current + amount);
+    try {
+      await updateUserAccount(targetUser.id, { krests: updatedKrests });
+      await fetchAccounts();
+      if (onAccountsUpdated) onAccountsUpdated();
+    } catch (err) {
+      console.warn('Grant Krests error:', err);
+    }
+  };
+
   const handleOpenEdit = (user: User) => {
     setEditingUser(user);
     setEditName(user.username);
     setEditSecretWord(user.secretWord || '');
     setEditTiers(user.purchasedTiers || []);
+    setEditKrests(user.krests || 0);
   };
 
   const handleSaveEdit = async () => {
@@ -107,6 +121,7 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
         username: cleanName,
         secretWord: cleanWord,
         purchasedTiers: editTiers,
+        krests: editKrests,
       });
     } catch (err) {
       console.warn('Account update error:', err);
@@ -287,6 +302,7 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
                     <th className="py-2.5 px-3">Name</th>
                     <th className="py-2.5 px-3">Secret Word</th>
                     <th className="py-2.5 px-3">Role</th>
+                    <th className="py-2.5 px-3">Krests</th>
                     <th className="py-2.5 px-3">Purchased Tiers</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
@@ -312,6 +328,29 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
                               User
                             </span>
                           )}
+                        </td>
+                        <td className="py-3 px-3 font-mono">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-amber-300 font-bold text-xs">
+                              {(acc.krests || 0).toLocaleString()} 🪙
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleGrantKrests(acc, 500)}
+                                className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 text-[10px] font-bold border border-amber-500/30 cursor-pointer"
+                                title="Grant +500 Krests"
+                              >
+                                +500
+                              </button>
+                              <button
+                                onClick={() => handleGrantKrests(acc, 1000)}
+                                className="px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/40 text-purple-200 text-[10px] font-bold border border-purple-500/30 cursor-pointer"
+                                title="Grant +1000 Krests"
+                              >
+                                +1K
+                              </button>
+                            </div>
+                          </div>
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex flex-wrap gap-1">
@@ -387,6 +426,19 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   className="w-full glass-input px-3.5 py-2 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 uppercase mb-1">
+                  Krests Balance 🪙
+                </label>
+                <input
+                  type="number"
+                  value={editKrests}
+                  onChange={(e) => setEditKrests(parseInt(e.target.value) || 0)}
+                  placeholder="Krests balance"
+                  className="w-full glass-input px-3.5 py-2 text-xs font-mono font-bold text-amber-300"
                 />
               </div>
 

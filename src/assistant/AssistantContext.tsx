@@ -64,6 +64,7 @@ export interface AssistantProviderProps {
   onUpdateSettingsEnabled?: (enabled: boolean) => void;
   onNavigateHome?: () => void;
   onOpenSettings?: () => void;
+  onOpenMarketplace?: () => void;
   // Arcade System Integrations
   games?: Game[];
   tiers?: Tier[];
@@ -82,6 +83,7 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   onUpdateSettingsEnabled,
   onNavigateHome,
   onOpenSettings,
+  onOpenMarketplace,
   games = [],
   tiers = [],
   currentlyPlayingGame,
@@ -140,7 +142,7 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
     isSleepingRef.current = isSleeping;
   }, [isSleeping]);
 
-  // Sync state if userSettings in localStorage updates externally
+  // Sync state if userSettings updates externally
   useEffect(() => {
     const handleStorageChange = () => {
       setSleepWordState(getDerivedSleepWord());
@@ -591,6 +593,9 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
         },
         openSettings: () => {
           if (onOpenSettings) onOpenSettings();
+        },
+        openMarketplace: () => {
+          if (onOpenMarketplace) onOpenMarketplace();
         },
         openAssistantControls: () => {
           setIsControlsOpen(true);

@@ -181,5 +181,30 @@ export const VOICE_COMMANDS: VoiceCommandDefinition[] = [
       return 'Board mode closed. Normal game commands and arcade controls are active again.';
     },
   },
+  {
+    id: 'open_marketplace',
+    name: 'Open Marketplace',
+    description: 'Navigate to the Kreational Marketplace page',
+    phrases: [
+      'open the marketplace',
+      'open marketplace',
+      'take me to the marketplace',
+      'show me the trading marketplace',
+      'i want to browse items',
+      'marketplace',
+      'browse items',
+      'trading marketplace',
+    ],
+    action: (context) => {
+      if (context.openMarketplace) {
+        context.openMarketplace();
+      } else {
+        window.history.pushState(null, '', '/Marketplace');
+        window.dispatchEvent(new Event('popstate'));
+      }
+      const name = context.enablePersonalizedGreetings !== false && context.username ? context.username : null;
+      return name ? `Sure, ${name}. Navigating you to the Marketplace.` : 'Navigating to the Marketplace.';
+    },
+  },
 ];
 

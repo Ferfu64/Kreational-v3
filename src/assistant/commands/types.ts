@@ -20,6 +20,7 @@ export interface CommandActionContext {
   openRandomGame?: () => CommandActionResult;
   closeCurrentGame?: () => CommandActionResult;
   showTier?: (tierTarget: string | number) => CommandActionResult;
+  openMarketplace?: () => void;
   username?: string;
   enablePersonalizedGreetings?: boolean;
 }

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { User, UserCosmetics, TierId } from '../types';
+import { User, UserCosmetics, TierId, ItemInstance } from '../types';
 import { COSMETICS_CATALOG, CosmeticOption } from '../utils/userProfile';
+import { createItemInstance } from '../data/utilityItems';
+import { triggerNotification } from '../utils/notificationManager';
 import {
   X,
   Sparkles,
@@ -17,6 +19,11 @@ import {
   Check,
   Flame,
   Award,
+  Zap,
+  Cpu,
+  Orbit,
+  Radio,
+  Bot,
 } from 'lucide-react';
 import { VoiceManager } from '../assistant/VoiceManager';
 import { SFX } from '../utils/sfx';
@@ -35,7 +42,8 @@ interface ShopModalProps {
 }
 
 export interface KrateTier {
-  id: 'bronze' | 'silver' | 'gold';
+  id: 'bronze' | 'silver' | 'gold' | 'cyber_tech' | 'aetherial_mythic' | 'overclocked_master';
+  category: 'cosmetic' | 'utility';
   name: string;
   cost: number;
   icon: string;
@@ -47,8 +55,10 @@ export interface KrateTier {
 }
 
 export const KRATE_TIERS: KrateTier[] = [
+  // Cosmetic Krates
   {
     id: 'bronze',
+    category: 'cosmetic',
     name: 'Bronze Krate',
     cost: 150,
     icon: '📦',
@@ -60,6 +70,7 @@ export const KRATE_TIERS: KrateTier[] = [
   },
   {
     id: 'silver',
+    category: 'cosmetic',
     name: 'Silver Krate',
     cost: 350,
     icon: '💎',
@@ -71,6 +82,7 @@ export const KRATE_TIERS: KrateTier[] = [
   },
   {
     id: 'gold',
+    category: 'cosmetic',
     name: 'Gold Krate',
     cost: 500,
     icon: '👑',
@@ -80,11 +92,51 @@ export const KRATE_TIERS: KrateTier[] = [
     shardsRange: [1, 5],
     description: '500 Krests. Epic/Legendary Cosmetics + 5% Chance to unlock AZGAMES Tier!',
   },
+
+  // 3 NEW FRESH UTILITY KRATES
+  {
+    id: 'cyber_tech',
+    category: 'utility',
+    name: 'Cyber Tech Utility Krate',
+    cost: 300,
+    icon: '🤖',
+    color: 'from-cyan-950 via-slate-950 to-fuchsia-950 text-cyan-300',
+    border: 'border-cyan-400/80 hover:border-cyan-300 shadow-cyan-900/80',
+    glow: 'shadow-cyan-500/40 hover:shadow-cyan-400/70',
+    shardsRange: [1, 3],
+    description: '300 Krests. Matrix Scan Unboxing. Drops Auto-Bidder Chips, Fee Rebates & Krate Rerolls!',
+  },
+  {
+    id: 'aetherial_mythic',
+    category: 'utility',
+    name: 'Aetherial Mythic Utility Krate',
+    cost: 650,
+    icon: '🔮',
+    color: 'from-purple-950 via-indigo-950 to-amber-950 text-purple-200',
+    border: 'border-purple-400/80 hover:border-purple-300 shadow-purple-900/80',
+    glow: 'shadow-purple-500/40 hover:shadow-purple-400/70',
+    shardsRange: [2, 4],
+    description: '650 Krests. Cosmic Rift Unboxing. High chance for Mythic Stand Shard Tokens & Stand Shields!',
+  },
+  {
+    id: 'overclocked_master',
+    category: 'utility',
+    name: 'Overclocked Master Utility Krate',
+    cost: 1200,
+    icon: '⚡',
+    color: 'from-amber-950 via-rose-950 to-amber-950 text-amber-300',
+    border: 'border-amber-400/90 hover:border-amber-200 shadow-amber-900/90',
+    glow: 'shadow-amber-500/50 hover:shadow-amber-400/80',
+    shardsRange: [3, 6],
+    description: '1200 Krests. Plasma Reactor Unboxing. Drops Guaranteed Legendary Utility Items + Bonus Krests!',
+  },
 ];
 
 export interface UnboxedReward {
   shardsAdded: number;
   cosmetic?: CosmeticOption;
+  utilityItem?: ItemInstance;
+  bonusKrests?: number;
   alreadyOwned?: boolean;
   unlockedAZGAMES?: boolean;
 }
@@ -154,55 +206,67 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       }
     }
 
-    // Determine Cosmetic
-    const cosmeticsToPick = COSMETICS_CATALOG.filter((c) => {
-      if (krate.id === 'bronze') return c.rarity === 'common' || c.rarity === 'rare';
-      if (krate.id === 'silver') return c.rarity === 'rare' || c.rarity === 'epic';
-      return c.rarity === 'epic' || c.rarity === 'legendary';
-    });
-
-    const chosenCosmetic = cosmeticsToPick[Math.floor(Math.random() * cosmeticsToPick.length)];
-
-    // Check ownership
-    const currentUnlockedBgs = user.cosmetics?.unlockedBackgrounds || ['bg_neon_cyber'];
-    const currentUnlockedFrames = user.cosmetics?.unlockedFrames || ['frame_default'];
-    const currentUnlockedTitles = user.cosmetics?.unlockedTitles || ['Arcade Rookie', 'Glitch Runner'];
-
+    // Determine Cosmetic vs Utility reward based on krate category
+    let chosenCosmetic: CosmeticOption | undefined = undefined;
+    let chosenUtilityItem: ItemInstance | undefined = undefined;
+    let bonusKrests = 0;
     let alreadyOwned = false;
-    let newBgs = [...currentUnlockedBgs];
-    let newFrames = [...currentUnlockedFrames];
-    let newTitles = [...currentUnlockedTitles];
 
-    if (chosenCosmetic.type === 'background') {
-      if (newBgs.includes(chosenCosmetic.id)) {
-        alreadyOwned = true;
-      } else {
-        newBgs.push(chosenCosmetic.id);
+    let currentUnlockedBgs = user.cosmetics?.unlockedBackgrounds || ['bg_neon_cyber'];
+    let currentUnlockedFrames = user.cosmetics?.unlockedFrames || ['frame_default'];
+    let currentUnlockedTitles = user.cosmetics?.unlockedTitles || ['Arcade Rookie', 'Glitch Runner'];
+
+    let newInventory = [...(user.inventory || [])];
+
+    if (krate.category === 'utility') {
+      let itemKey = 'cyber_auto_bidder';
+      if (krate.id === 'cyber_tech') {
+        const pool = ['cyber_auto_bidder', 'fee_rebate_pass', 'krate_reroll', 'krest_booster'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+      } else if (krate.id === 'aetherial_mythic') {
+        const pool = ['mythic_shard_token', 'auction_shield_charm', 'temp_access_token', 'quantum_reroll_cube'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+      } else if (krate.id === 'overclocked_master') {
+        const pool = ['xp_booster_overclock', 'mythic_shard_token', 'auction_shield_charm'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+        bonusKrests = Math.floor(Math.random() * 300) + 200;
       }
-    } else if (chosenCosmetic.type === 'frame') {
-      if (newFrames.includes(chosenCosmetic.id)) {
-        alreadyOwned = true;
-      } else {
-        newFrames.push(chosenCosmetic.id);
-      }
-    } else if (chosenCosmetic.type === 'title') {
-      if (newTitles.includes(chosenCosmetic.name)) {
-        alreadyOwned = true;
-      } else {
-        newTitles.push(chosenCosmetic.name);
+
+      chosenUtilityItem = createItemInstance(itemKey, user.id);
+      newInventory.push(chosenUtilityItem);
+    } else {
+      // Cosmetic Krate logic
+      const cosmeticsToPick = COSMETICS_CATALOG.filter((c) => {
+        if (krate.id === 'bronze') return c.rarity === 'common' || c.rarity === 'rare';
+        if (krate.id === 'silver') return c.rarity === 'rare' || c.rarity === 'epic';
+        return c.rarity === 'epic' || c.rarity === 'legendary';
+      });
+
+      chosenCosmetic = cosmeticsToPick[Math.floor(Math.random() * cosmeticsToPick.length)];
+
+      if (chosenCosmetic.type === 'background') {
+        if (currentUnlockedBgs.includes(chosenCosmetic.id)) alreadyOwned = true;
+        else currentUnlockedBgs.push(chosenCosmetic.id);
+      } else if (chosenCosmetic.type === 'frame') {
+        if (currentUnlockedFrames.includes(chosenCosmetic.id)) alreadyOwned = true;
+        else currentUnlockedFrames.push(chosenCosmetic.id);
+      } else if (chosenCosmetic.type === 'title') {
+        if (currentUnlockedTitles.includes(chosenCosmetic.name)) alreadyOwned = true;
+        else currentUnlockedTitles.push(chosenCosmetic.name);
       }
     }
 
     let updatedUser: User = {
       ...user,
-      krests: newKrests,
+      krests: newKrests + bonusKrests,
       iconShards: iconShards + shardsDropped,
       purchasedTiers: Array.from(new Set(purchasedTiers)),
+      inventory: newInventory,
       cosmetics: {
         ...user.cosmetics,
-        unlockedBackgrounds: newBgs,
-        unlockedFrames: newFrames,
-        unlockedTitles: newTitles,
+        unlockedBackgrounds: currentUnlockedBgs,
+        unlockedFrames: currentUnlockedFrames,
+        unlockedTitles: currentUnlockedTitles,
       },
     };
 
@@ -221,10 +285,23 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       setReward({
         shardsAdded: shardsDropped,
         cosmetic: chosenCosmetic,
+        utilityItem: chosenUtilityItem,
+        bonusKrests,
         alreadyOwned,
         unlockedAZGAMES,
       });
       setUnboxingStep('revealed');
+
+      const rewardDesc = chosenUtilityItem
+        ? chosenUtilityItem.name
+        : chosenCosmetic
+        ? chosenCosmetic.name
+        : 'Mystery Items';
+
+      triggerNotification(
+        '📦 Krate Unboxed!',
+        `You opened ${krate.name} and received ${rewardDesc} + ${shardsDropped} Icon Shards!`
+      );
 
       try {
         if (unlockedAZGAMES) {
@@ -232,12 +309,12 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             configOverride: { rate: 1.1, pitch: 1.2 },
           });
         } else {
-          VoiceManager.speak(`Krate opened! Received ${shardsDropped} Icon Shards and ${chosenCosmetic.name}!`, {
+          VoiceManager.speak(`Krate opened! Received ${rewardDesc}!`, {
             configOverride: { rate: 1.1, pitch: 1.2 },
           });
         }
       } catch (e) {}
-    }, 2200);
+    }, 2400);
   };
 
   const closeUnboxing = () => {
@@ -548,23 +625,54 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
       {/* Unboxing Animation Modal Overlay */}
       {openingKrate && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4 animate-fadeIn">
           <div className="w-full max-w-md p-6 rounded-3xl bg-slate-950 border border-purple-500/50 shadow-2xl shadow-purple-950/80 text-center space-y-5 relative overflow-hidden">
             {unboxingStep === 'spinning' ? (
               <div className="py-12 space-y-6">
-                <div className="relative w-28 h-28 mx-auto">
-                  <div className="absolute inset-0 rounded-full bg-purple-500/20 animate-ping" />
-                  <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center text-6xl shadow-2xl shadow-purple-500/50 animate-bounce">
-                    {openingKrate.icon}
+                {openingKrate.id === 'cyber_tech' ? (
+                  /* 1. Cyber Tech Matrix Laser Scan Animation */
+                  <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-2 border-cyan-500/60 animate-ping" />
+                    <div className="absolute inset-2 rounded-2xl border border-cyan-400/80 animate-spin" style={{ animationDuration: '3s' }} />
+                    <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-cyan-950 via-slate-900 to-fuchsia-950 border-2 border-cyan-400 flex items-center justify-center text-6xl shadow-2xl shadow-cyan-500/50 relative overflow-hidden">
+                      <Cpu className="w-14 h-14 text-cyan-300 animate-pulse" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-400/30 to-transparent animate-bounce" />
+                    </div>
                   </div>
-                </div>
+                ) : openingKrate.id === 'aetherial_mythic' ? (
+                  /* 2. Aetherial Mythic Starlight Rift Swirl Animation */
+                  <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
+                    <div className="absolute -inset-4 rounded-full bg-purple-600/30 blur-xl animate-pulse" />
+                    <div className="absolute inset-0 rounded-full border-4 border-dashed border-purple-400 animate-spin" style={{ animationDuration: '6s' }} />
+                    <div className="w-28 h-28 rounded-full bg-gradient-to-tr from-purple-900 via-indigo-950 to-amber-900 border-2 border-purple-300 flex items-center justify-center text-6xl shadow-2xl shadow-purple-500/60">
+                      <Orbit className="w-14 h-14 text-purple-200 animate-spin" style={{ animationDuration: '2s' }} />
+                    </div>
+                  </div>
+                ) : openingKrate.id === 'overclocked_master' ? (
+                  /* 3. Overclocked Master Plasma Reactor Core Animation */
+                  <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
+                    <div className="absolute -inset-6 rounded-full bg-amber-500/30 blur-2xl animate-ping" />
+                    <div className="absolute inset-0 rounded-full border-2 border-amber-400/90 animate-pulse" />
+                    <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-amber-600 via-rose-950 to-amber-900 border-2 border-amber-300 flex items-center justify-center text-6xl shadow-2xl shadow-amber-500/80 animate-bounce">
+                      <Zap className="w-14 h-14 text-amber-300 animate-pulse" />
+                    </div>
+                  </div>
+                ) : (
+                  /* Standard Cosmetic Krate Bounce Animation */
+                  <div className="relative w-28 h-28 mx-auto">
+                    <div className="absolute inset-0 rounded-full bg-purple-500/20 animate-ping" />
+                    <div className="w-28 h-28 rounded-3xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center text-6xl shadow-2xl shadow-purple-500/50 animate-bounce">
+                      {openingKrate.icon}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <h3 className="text-xl font-bold text-white font-mono tracking-tight">
                     Opening {openingKrate.name}...
                   </h3>
-                  <p className="text-xs text-purple-300 font-mono mt-1 animate-pulse">
-                    Unlocking mystery profile cosmetic...
+                  <p className="text-xs text-cyan-300 font-mono mt-1 animate-pulse">
+                    Scanning loot tables & unlocking items...
                   </p>
                 </div>
               </div>
@@ -601,6 +709,39 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                         </div>
                       </div>
                     )}
+
+                    {/* Utility Item Received */}
+                    {reward.utilityItem && (
+                      <div className="p-3.5 rounded-xl bg-gradient-to-r from-cyan-950/80 to-slate-900 border border-cyan-500/50 flex items-center justify-between shadow-md">
+                        <div className="flex items-center gap-3">
+                          <div className="text-2xl">{reward.utilityItem.icon}</div>
+                          <div className="text-left">
+                            <span className="text-xs font-extrabold text-cyan-200 block">
+                              {reward.utilityItem.name}
+                            </span>
+                            <span className="text-[10px] text-slate-300 block">
+                              {reward.utilityItem.description}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                          {reward.utilityItem.rarity}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Bonus Krests */}
+                    {reward.bonusKrests && reward.bonusKrests > 0 ? (
+                      <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-500/40 flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <Sparkles className="w-5 h-5 text-amber-400" />
+                          <span className="text-xs font-bold text-white">Bonus Krests Jackpot</span>
+                        </div>
+                        <span className="text-sm font-black text-amber-300 font-mono">
+                          +{reward.bonusKrests} Krests
+                        </span>
+                      </div>
+                    ) : null}
 
                     {/* Shards Received */}
                     <div className="p-3 rounded-xl bg-purple-950/60 border border-purple-500/30 flex items-center justify-between">

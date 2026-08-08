@@ -94,6 +94,11 @@ class SoundManager {
     } catch (e) {}
   }
 
+  // Generic Success Fanfare
+  public playSuccess() {
+    this.playPurchase();
+  }
+
   // Unboxing Fanfare
   public playUnboxing() {
     const ctx = this.getContext();

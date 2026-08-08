@@ -140,7 +140,7 @@ export async function fetchAllUsers(): Promise<User[]> {
     const querySnapshot = await withTimeout(getDocs(collection(db, USERS_COLLECTION)), 3000);
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data() as UserAccountRecord;
-      if (data && data.user) {
+      if (data && data.user && !data.user.isBot && !data.user.id.startsWith('bot-')) {
         const word = data.secretWord || data.user.secretWord || '';
         const userObj = { ...data.user, secretWord: word };
         userMap.set(userObj.id, userObj);
@@ -151,7 +151,11 @@ export async function fetchAllUsers(): Promise<User[]> {
     });
   } catch (err) {
     console.warn('Firestore fetch all users failed, using local accounts:', err);
-    getLocalAccounts().forEach((a) => userMap.set(a.user.id, { ...a.user, secretWord: a.secretWord || a.user.secretWord }));
+    getLocalAccounts().forEach((a) => {
+      if (!a.user.isBot && !a.user.id.startsWith('bot-')) {
+        userMap.set(a.user.id, { ...a.user, secretWord: a.secretWord || a.user.secretWord });
+      }
+    });
   }
 
   return Array.from(userMap.values());
@@ -237,7 +241,7 @@ export async function saveFullUserAccountToFirestore(updatedUser: User): Promise
 
 export async function updateUserAccount(
   userId: string,
-  updates: { username?: string; secretWord?: string; purchasedTiers?: TierId[]; removeAllAccess?: boolean }
+  updates: { username?: string; secretWord?: string; purchasedTiers?: TierId[]; removeAllAccess?: boolean; krests?: number }
 ): Promise<User | null> {
   let existingAccount: UserAccountRecord | null = null;
 
@@ -264,6 +268,7 @@ export async function updateUserAccount(
     ...existingAccount.user,
     username: updates.username ? updates.username : existingAccount.user.username,
     secretWord: newWord,
+    krests: updates.krests !== undefined ? updates.krests : (existingAccount.user.krests || 0),
     purchasedTiers: updates.removeAllAccess
       ? []
       : updates.purchasedTiers !== undefined
@@ -366,14 +371,6 @@ export async function fetchAllRequestsStore(): Promise<GameRequest[]> {
     console.warn('Firestore fetch requests failed:', err);
   }
 
-  try {
-    const raw = safeGet('kreational_local_requests');
-    if (raw) {
-      const localReqs: GameRequest[] = JSON.parse(raw);
-      localReqs.forEach((r) => requestMap.set(r.id, r));
-    }
-  } catch (e) {}
-
   return Array.from(requestMap.values()).sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -383,13 +380,6 @@ export async function fetchUserRequestsStore(userId: string): Promise<GameReques
 }
 
 export async function createRequestStore(req: GameRequest): Promise<void> {
-  try {
-    const raw = safeGet('kreational_local_requests');
-    const localReqs: GameRequest[] = raw ? JSON.parse(raw) : [];
-    localReqs.push(req);
-    safeSet('kreational_local_requests', JSON.stringify(localReqs));
-  } catch (e) {}
-
   try {
     await setDoc(doc(db, REQUESTS_COLLECTION, req.id), req);
   } catch (err) {
@@ -403,21 +393,6 @@ export async function resolveRequestStore(
   durationSeconds?: number
 ): Promise<void> {
   let reqObj: GameRequest | null = null;
-
-  try {
-    const raw = safeGet('kreational_local_requests');
-    if (raw) {
-      const localReqs: GameRequest[] = JSON.parse(raw);
-      const idx = localReqs.findIndex((r) => r.id === requestId);
-      if (idx >= 0) {
-        localReqs[idx].status = status;
-        localReqs[idx].resolvedAt = Date.now();
-        if (durationSeconds) localReqs[idx].durationSeconds = durationSeconds;
-        reqObj = localReqs[idx];
-        safeSet('kreational_local_requests', JSON.stringify(localReqs));
-      }
-    }
-  } catch (e) {}
 
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);

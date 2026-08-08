@@ -1,19 +1,21 @@
 import React, { useRef } from 'react';
 import { User } from '../types';
-import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame } from 'lucide-react';
+import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
 interface NavbarProps {
   user: User;
-  activeTab: 'games' | 'admin-accounts' | 'admin-requests' | 'admin-games';
-  setActiveTab: (tab: 'games' | 'admin-accounts' | 'admin-requests' | 'admin-games') => void;
+  activeTab: 'games' | 'marketplace' | 'admin-accounts' | 'admin-requests' | 'admin-games';
+  setActiveTab: (tab: 'games' | 'marketplace' | 'admin-accounts' | 'admin-requests' | 'admin-games') => void;
   onOpenRequestsHistory: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
   onOpenShop: () => void;
+  onOpenNotifications?: () => void;
   onLogout: () => void;
   pendingRequestsCount?: number;
+  unreadNotificationsCount?: number;
   isOnline?: boolean;
 }
 
@@ -25,8 +27,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
   onOpenProfile,
   onOpenShop,
+  onOpenNotifications,
   onLogout,
   pendingRequestsCount = 0,
+  unreadNotificationsCount = 0,
   isOnline = true,
 }) => {
   const isAdmin = user.role === 'admin' || user.username === 'Kreator';
@@ -100,6 +104,23 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <Gamepad2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
                 <span>Game Library</span>
+              </button>
+
+              {/* Marketplace Stand Hub Button */}
+              <button
+                id="nav-marketplace-button"
+                onClick={() => {
+                  SFX.playClick();
+                  setActiveTab('marketplace');
+                }}
+                className={`px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 ${
+                  activeTab === 'marketplace'
+                    ? 'bg-amber-500/20 text-amber-200 border border-amber-500/50 shadow-md shadow-amber-950/40 font-bold'
+                    : 'text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 border border-transparent'
+                }`}
+              >
+                <Store className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                <span>Marketplace</span>
               </button>
 
               {/* Shop & Krates Button */}
@@ -233,6 +254,24 @@ export const Navbar: React.FC<NavbarProps> = ({
                   {streak}d
                 </span>
               </div>
+            </button>
+
+            {/* Notification Bell Button */}
+            <button
+              id="nav-notifications-button"
+              onClick={() => {
+                SFX.playClick();
+                onOpenNotifications?.();
+              }}
+              className="p-2 sm:p-2.5 rounded-xl text-slate-400 hover:text-cyan-300 hover:bg-white/10 border border-white/10 transition-all cursor-pointer relative"
+              title="View Notifications & History"
+            >
+              <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-400" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white font-mono font-bold text-[9px] flex items-center justify-center border border-black animate-pulse">
+                  {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                </span>
+              )}
             </button>
 
             <button

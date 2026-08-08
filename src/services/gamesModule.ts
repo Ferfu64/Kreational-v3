@@ -90,13 +90,7 @@ class GamesModule {
   }
 
   private persistCustomGames(): void {
-    try {
-      // Save all non-default or customized games to local storage
-      const customGames = Array.from(this.gamesMap.values());
-      safeSet(STORAGE_KEY, JSON.stringify(customGames));
-    } catch (err) {
-      console.warn('GamesModule failed to persist games:', err);
-    }
+    // Custom games are persisted server-sided in Firestore via createGameStore/updateGameStore
   }
 }
 

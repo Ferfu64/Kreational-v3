@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Game, User } from '../types';
 import { safeGet, safeSet } from '../utils/persistentStorage';
+import { saveFullUserAccountToFirestore } from '../services/firestoreStore';
 import { X, Maximize2, Minimize2, ShieldAlert, Clock, RefreshCw, Gamepad2, FileText, Check, Heart } from 'lucide-react';
 
 interface GameModalProps {
@@ -38,49 +39,46 @@ export const GameModal: React.FC<GameModalProps> = ({
   const [remainingSecs, setRemainingSecs] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Local storage effect for play history, note loading, and favorites
+  // Server-sided effect for play history, note loading, and favorites
   useEffect(() => {
     if (!game || !accessGranted) return;
     try {
-      // 1. Record play history in LocalStorage
-      const historyRaw = safeGet('kreational_play_history');
-      const history = historyRaw ? JSON.parse(historyRaw) : [];
-      const updatedHistory = [
-        { id: game.id, title: game.title, tier: game.tier, playedAt: Date.now() },
-        ...history.filter((h: any) => h.id !== game.id),
-      ].slice(0, 30);
-      safeSet('kreational_play_history', JSON.stringify(updatedHistory));
+      // 1. Record play history in Firestore user profile
+      const historyList = user.playHistory || [];
+      if (!historyList.includes(game.id)) {
+        const updatedHistory = [game.id, ...historyList.filter((id) => id !== game.id)].slice(0, 30);
+        saveFullUserAccountToFirestore({ ...user, playHistory: updatedHistory }).catch(() => {});
+      }
 
-      // 2. Load game note from LocalStorage
-      const savedNote = safeGet(`kreational_game_note_${game.id}`);
-      setGameNote(savedNote || '');
+      // 2. Load game note from user profile
+      const savedNote = user.gameNotes?.[game.id] || safeGet(`kreational_game_note_${game.id}`) || '';
+      setGameNote(savedNote);
 
-      // 3. Load favorite status from LocalStorage
-      const favsRaw = safeGet('kreational_favorites');
-      const favs: string[] = favsRaw ? JSON.parse(favsRaw) : [];
+      // 3. Load favorite status from user profile
+      const favs = user.favoriteGames || [];
       setIsFavorite(favs.includes(game.id));
     } catch (err) {
-      console.warn('LocalStorage operation failed:', err);
+      console.warn('GameModal load effect warning:', err);
     }
-  }, [game, accessGranted]);
+  }, [game, accessGranted, user.favoriteGames]);
 
   const handleSaveNote = (text: string) => {
     setGameNote(text);
     if (!game) return;
     try {
-      safeSet(`kreational_game_note_${game.id}`, text);
+      const updatedNotes = { ...(user.gameNotes || {}), [game.id]: text };
+      saveFullUserAccountToFirestore({ ...user, gameNotes: updatedNotes }).catch(() => {});
       setNoteSaved(true);
       setTimeout(() => setNoteSaved(false), 2000);
     } catch (err) {
-      console.warn('Failed to save note to localStorage:', err);
+      console.warn('Failed to save note:', err);
     }
   };
 
   const toggleFavorite = () => {
     if (!game) return;
     try {
-      const favsRaw = safeGet('kreational_favorites');
-      const favs: string[] = favsRaw ? JSON.parse(favsRaw) : [];
+      const favs = user.favoriteGames || [];
       let updated: string[];
       if (favs.includes(game.id)) {
         updated = favs.filter((id) => id !== game.id);
@@ -89,9 +87,9 @@ export const GameModal: React.FC<GameModalProps> = ({
         updated = [...favs, game.id];
         setIsFavorite(true);
       }
-      safeSet('kreational_favorites', JSON.stringify(updated));
+      saveFullUserAccountToFirestore({ ...user, favoriteGames: updated }).catch(() => {});
     } catch (err) {
-      console.warn('Failed to update favorites in localStorage:', err);
+      console.warn('Failed to update favorites:', err);
     }
   };
 

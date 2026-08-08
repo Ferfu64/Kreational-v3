@@ -13,6 +13,7 @@ import { GameManagementPanel } from './components/GameManagementPanel';
 import { SettingsModal, UserSettings, DEFAULT_SETTINGS } from './components/SettingsModal';
 import { ProfileModal } from './components/ProfileModal';
 import { ShopModal } from './components/ShopModal';
+import { MarketplacePage } from './components/MarketplacePage';
 import { BrandingFooter } from './components/BrandingFooter';
 import { LoadingScreen } from './components/LoadingScreen';
 import {
@@ -44,6 +45,15 @@ import { AssistantControlsModal } from './assistant/AssistantControlsModal';
 import { ChalkboardModal } from './assistant/ChalkboardModal';
 import { ArcadeContextManager } from './assistant/ArcadeContextManager';
 import { ApprovalNotifications } from './components/ApprovalNotifications';
+import { NotificationToastContainer } from './components/NotificationToastContainer';
+import { NotificationDrawer } from './components/NotificationDrawer';
+import {
+  fetchAllListings,
+  createListingInStore,
+  placeBidInStore,
+  cashOutListingInStore,
+} from './services/marketplaceStore';
+import { runBotMarketplaceSimulation } from './services/marketplaceBots';
 
 const INITIAL_TIERS: Tier[] = [
   { id: 'bronze', name: 'Bronze', displayOrder: 1 },
@@ -152,6 +162,47 @@ export default function App() {
   // Modals & Panels
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
+  const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  // Poll unread notifications count from local storage
+  useEffect(() => {
+    const updateUnreadCount = () => {
+      try {
+        const stored = safeGet('kreational_user_notifications');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            const unread = parsed.filter((n: any) => !n.read).length;
+            setUnreadNotificationsCount(unread);
+          }
+        }
+      } catch (e) {}
+    };
+
+    updateUnreadCount();
+    const interval = setInterval(updateUnreadCount, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Global background marketplace auto-bidding engine (runs even when offline or in other views)
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(async () => {
+      try {
+        const activeListings = await fetchAllListings();
+        await runBotMarketplaceSimulation(
+          activeListings,
+          createListingInStore,
+          placeBidInStore,
+          cashOutListingInStore
+        );
+      } catch (e) {
+        // Silent catch for background execution
+      }
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [user?.id]);
 
   // Update DOM attributes dynamically when userSettings, playingGame, or user changes
   useEffect(() => {
@@ -179,7 +230,39 @@ export default function App() {
   const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
 
   // Active View Tab
-  const [activeTab, setActiveTab] = useState<'games' | 'admin-accounts' | 'admin-requests' | 'admin-games'>('games');
+  const [activeTab, setActiveTab] = useState<'games' | 'marketplace' | 'admin-accounts' | 'admin-requests' | 'admin-games'>(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes('marketplace')) {
+      return 'marketplace';
+    }
+    return 'games';
+  });
+
+  const handleSetActiveTab = (tab: 'games' | 'marketplace' | 'admin-accounts' | 'admin-requests' | 'admin-games') => {
+    setActiveTab(tab);
+    if (tab === 'marketplace') {
+      if (!window.location.pathname.toLowerCase().includes('marketplace')) {
+        window.history.pushState(null, '', '/Marketplace');
+      }
+    } else if (tab === 'games') {
+      if (window.location.pathname.toLowerCase().includes('marketplace')) {
+        window.history.pushState(null, '', '/');
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      if (path.includes('marketplace')) {
+        setActiveTab('marketplace');
+      } else if (path === '/' || path === '' || path.includes('games')) {
+        setActiveTab('games');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Modals
   const [requestModal, setRequestModal] = useState<{
@@ -538,6 +621,9 @@ export default function App() {
       onOpenSettings={() => {
         setIsSettingsOpen(true);
       }}
+      onOpenMarketplace={() => {
+        handleSetActiveTab('marketplace');
+      }}
       games={games}
       tiers={tiers}
       currentlyPlayingGame={playingGame}
@@ -553,18 +639,22 @@ export default function App() {
         <div className="fixed -bottom-32 left-1/3 w-96 h-96 bg-purple-900/15 rounded-full blur-[120px] pointer-events-none" />
 
         {/* Navbar */}
-        <Navbar
-          user={user}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          onOpenRequestsHistory={() => setIsRequestHistoryOpen(true)}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onOpenProfile={() => setIsProfileOpen(true)}
-          onOpenShop={() => setIsShopOpen(true)}
-          onLogout={handleLogout}
-          pendingRequestsCount={pendingRequestsCount}
-          isOnline={isOnline}
-        />
+        {activeTab !== 'marketplace' && (
+          <Navbar
+            user={user}
+            activeTab={activeTab}
+            setActiveTab={handleSetActiveTab}
+            onOpenRequestsHistory={() => setIsRequestHistoryOpen(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenProfile={() => setIsProfileOpen(true)}
+            onOpenShop={() => setIsShopOpen(true)}
+            onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
+            onLogout={handleLogout}
+            pendingRequestsCount={pendingRequestsCount}
+            unreadNotificationsCount={unreadNotificationsCount}
+            isOnline={isOnline}
+          />
+        )}
 
         {/* Main Content View */}
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -612,6 +702,14 @@ export default function App() {
                 enableSearchBar={userSettings.enableSearchBar}
               />
             </div>
+          )}
+
+          {activeTab === 'marketplace' && (
+            <MarketplacePage
+              user={user}
+              onUpdateUser={handleUpdateUser}
+              onNavigateHome={() => handleSetActiveTab('games')}
+            />
           )}
 
           {activeTab === 'admin-accounts' && (
@@ -700,6 +798,7 @@ export default function App() {
             onUpdateUser={handleUpdateUser}
             onClose={() => setIsProfileOpen(false)}
             onOpenShop={() => setIsShopOpen(true)}
+            onNavigateToMarketplace={() => handleSetActiveTab('marketplace')}
           />
         )}
 
@@ -727,6 +826,15 @@ export default function App() {
             onClose={() => setIsRequestHistoryOpen(false)}
           />
         )}
+
+        {/* Notification Toast Container */}
+        <NotificationToastContainer />
+
+        {/* Notification Drawer History View */}
+        <NotificationDrawer
+          isOpen={isNotificationDrawerOpen}
+          onClose={() => setIsNotificationDrawerOpen(false)}
+        />
 
         {/* App Customization & Settings Modal */}
         <SettingsModal

@@ -1,5 +1,4 @@
 import { User, TierId } from '../types';
-import { safeGet, safeSet } from './persistentStorage';
 
 export const KREATOR_ADMIN_USER: User = {
   id: 'kreator-admin-id',
@@ -11,30 +10,21 @@ export const KREATOR_ADMIN_USER: User = {
   createdAt: Date.now(),
 };
 
-interface LocalAccountRecord {
+export interface LocalAccountRecord {
   user: User;
   secretWord: string;
 }
 
-const STORAGE_KEY = 'kreational_local_accounts_v1';
+// Memory cache for runtime operations; persistent data is saved to Firestore
+const memoryAccountsCache: LocalAccountRecord[] = [];
 
 export function getLocalAccounts(): LocalAccountRecord[] {
-  try {
-    const raw = safeGet(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (err) {
-    console.warn('Failed to parse local accounts from localStorage:', err);
-    return [];
-  }
+  return [...memoryAccountsCache];
 }
 
 export function saveLocalAccounts(accounts: LocalAccountRecord[]): void {
-  try {
-    safeSet(STORAGE_KEY, JSON.stringify(accounts));
-  } catch (err) {
-    console.warn('Failed to save local accounts to localStorage:', err);
-  }
+  memoryAccountsCache.length = 0;
+  memoryAccountsCache.push(...accounts);
 }
 
 export function authenticateLocally(nameInput: string, wordInput: string): { user: User; token: string } | null {
@@ -50,7 +40,7 @@ export function authenticateLocally(nameInput: string, wordInput: string): { use
     };
   }
 
-  // 2. Local accounts check
+  // 2. Memory cache check
   const localAccounts = getLocalAccounts();
   const found = localAccounts.find((acc) => {
     const uNameMatch = acc.user.username.toLowerCase() === cleanNameLower;

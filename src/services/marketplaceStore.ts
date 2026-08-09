@@ -7,6 +7,7 @@ import {
   query,
   where,
   orderBy,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import {
@@ -17,6 +18,7 @@ import {
 } from '../types';
 import { saveFullUserAccountToFirestore } from './firestoreStore';
 import { triggerNotification } from '../utils/notificationManager';
+import { safeSet } from '../utils/persistentStorage';
 
 const LISTINGS_COLLECTION = 'marketplace_listings';
 const HISTORY_COLLECTION = 'marketplace_history';
@@ -26,13 +28,85 @@ const USERS_COLLECTION = 'users';
 let localListingsMemory: MarketplaceListing[] = [];
 let localHistoryMemory: MarketplaceHistoryEntry[] = [];
 
+function isCleanPowerupListing(listing: MarketplaceListing): boolean {
+  if (!listing || !listing.itemInstance) return false;
+  const name = (listing.itemInstance.name || '').toLowerCase();
+  const itemId = (listing.itemInstance.itemId || '').toLowerCase();
+  if (
+    name.includes('stand') ||
+    itemId.includes('stand') ||
+    name.includes('shard') ||
+    itemId.includes('shard') ||
+    name.includes('pass token')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function subscribeToListings(callback: (listings: MarketplaceListing[]) => void): () => void {
+  try {
+    const q = query(collection(db, LISTINGS_COLLECTION));
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const listings: MarketplaceListing[] = [];
+        querySnapshot.forEach((docSnap) => {
+          const item = docSnap.data() as MarketplaceListing;
+          if (isCleanPowerupListing(item)) {
+            listings.push(item);
+          }
+        });
+        listings.sort((a, b) => b.createdAt - a.createdAt);
+        localListingsMemory = listings;
+        callback(listings);
+      },
+      (err) => {
+        console.warn('subscribeToListings error:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('subscribeToListings init error:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToHistory(callback: (history: MarketplaceHistoryEntry[]) => void): () => void {
+  try {
+    const q = query(collection(db, HISTORY_COLLECTION));
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const history: MarketplaceHistoryEntry[] = [];
+        querySnapshot.forEach((docSnap) => {
+          history.push(docSnap.data() as MarketplaceHistoryEntry);
+        });
+        history.sort((a, b) => b.timestamp - a.timestamp);
+        localHistoryMemory = history;
+        callback(history);
+      },
+      (err) => {
+        console.warn('subscribeToHistory error:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('subscribeToHistory init error:', err);
+    return () => {};
+  }
+}
+
 export async function fetchAllListings(): Promise<MarketplaceListing[]> {
   try {
     const q = query(collection(db, LISTINGS_COLLECTION));
     const querySnapshot = await getDocs(q);
     const listings: MarketplaceListing[] = [];
     querySnapshot.forEach((docSnap) => {
-      listings.push(docSnap.data() as MarketplaceListing);
+      const item = docSnap.data() as MarketplaceListing;
+      if (isCleanPowerupListing(item)) {
+        listings.push(item);
+      }
     });
 
     listings.sort((a, b) => b.createdAt - a.createdAt);
@@ -158,7 +232,7 @@ export async function placeBidInStore(
   const previousHighestBidderId = listing.highestBidderId;
   const previousCurrentBid = listing.currentBid;
 
-  // Get current logged in user ID to guard client notifications
+  // Get current logged in user ID to guard client notifications and local sync
   let currentLoggedInUserId = '';
   try {
     const stored = localStorage.getItem('kreational_current_user');
@@ -168,6 +242,15 @@ export async function placeBidInStore(
     }
   } catch (e) {}
 
+  // Calculate actual Krest cost needed for this bid
+  const costNeeded = previousHighestBidderId === bidder.id
+    ? roundedBid - previousCurrentBid
+    : roundedBid;
+
+  if ((bidder.krests || 0) < costNeeded) {
+    throw new Error(`Insufficient Krests balance. You need ${costNeeded} Krests to place this bid.`);
+  }
+
   // Notify seller if a bid was placed on their item by another user
   if (listing.sellerId === currentLoggedInUserId && bidder.id !== currentLoggedInUserId) {
     triggerNotification(
@@ -176,7 +259,7 @@ export async function placeBidInStore(
     );
   }
 
-  // Handle Outbid Previous Highest Bidder if different user
+  // Handle Outbid Previous Highest Bidder: refund full bid back to previous bidder's Krests
   if (previousHighestBidderId && previousHighestBidderId !== bidder.id) {
     try {
       const prevDocRef = doc(db, USERS_COLLECTION, previousHighestBidderId);
@@ -184,42 +267,42 @@ export async function placeBidInStore(
       if (prevSnap.exists()) {
         const prevAccount = prevSnap.data();
         const prevUser: User = prevAccount.user;
-        const newReserved = Math.max(
-          0,
-          (prevUser.reservedKrests || 0) - previousCurrentBid
-        );
         const updatedPrevUser: User = {
           ...prevUser,
-          reservedKrests: newReserved,
+          krests: (prevUser.krests || 0) + previousCurrentBid,
+          reservedKrests: 0,
         };
         await saveFullUserAccountToFirestore(updatedPrevUser);
+
+        if (previousHighestBidderId === currentLoggedInUserId) {
+          try {
+            localStorage.setItem('kreational_user', JSON.stringify(updatedPrevUser));
+          } catch (e) {}
+          triggerNotification(
+            '🎉 Outbid Refund!',
+            `You were outbid on ${listing.itemInstance.name}. ${previousCurrentBid} Krests refunded to your balance!`
+          );
+        }
       }
     } catch (err) {
-      console.warn('Error releasing previous bidder reserved Krests:', err);
-    }
-
-    if (previousHighestBidderId === currentLoggedInUserId) {
-      triggerNotification(
-        'You were outbid!',
-        `${listing.itemInstance.name} - New highest bid is ${roundedBid} Krests.`
-      );
+      console.warn('Error refunding outbid bidder Krests:', err);
     }
   }
 
-  // Calculate bidder's new reserved Krests
-  let bidderReserved = bidder.reservedKrests || 0;
-  if (previousHighestBidderId === bidder.id) {
-    // Same bidder raising their bid
-    const diff = roundedBid - previousCurrentBid;
-    bidderReserved += diff;
-  } else {
-    bidderReserved += roundedBid;
-  }
-
+  // Deduct costNeeded from active bidder's Krests
   const updatedBidder: User = {
     ...bidder,
-    reservedKrests: bidderReserved,
+    krests: Math.max(0, (bidder.krests || 0) - costNeeded),
+    reservedKrests: 0,
   };
+
+  if (bidder.id === currentLoggedInUserId) {
+    try {
+      safeSet('kreational_user', JSON.stringify(updatedBidder));
+      localStorage.setItem('kreational_current_user', JSON.stringify(updatedBidder));
+      window.dispatchEvent(new Event('user_updated'));
+    } catch (e) {}
+  }
 
   // Update listing
   const updatedListing: MarketplaceListing = {
@@ -261,7 +344,212 @@ export async function placeBidInStore(
     );
   }
 
+  // Auto cash-out rule: After 3 bids, ONLY bot sellers auto cash out! Player sellers can wait and accept whenever they want.
+  if (updatedListing.bidHistory.length >= 3 && listing.sellerId.startsWith('bot-')) {
+    try {
+      // Find seller user
+      let sellerUser: User | null = null;
+      const sellerDocRef = doc(db, USERS_COLLECTION, listing.sellerId);
+      const sellerSnap = await getDoc(sellerDocRef);
+      if (sellerSnap.exists()) {
+        sellerUser = sellerSnap.data().user;
+      }
+      if (!sellerUser) {
+        // Fallback for bot seller
+        sellerUser = {
+          id: listing.sellerId,
+          username: listing.sellerUsername,
+          role: 'user',
+          krests: 1000,
+          inventory: [listing.itemInstance],
+        } as User;
+      }
+      const { completedListing } = await cashOutListingInStore(sellerUser, listingId);
+      return { updatedBidder, updatedListing: completedListing };
+    } catch (err) {
+      console.warn('Auto cash out after 3 bids error:', err);
+    }
+  }
+
   return { updatedBidder, updatedListing };
+}
+
+export async function buyNowInStore(
+  buyer: User,
+  listingId: string
+): Promise<{ updatedBuyer: User; completedListing: MarketplaceListing }> {
+  let listing: MarketplaceListing | null = null;
+  try {
+    const docRef = doc(db, LISTINGS_COLLECTION, listingId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      listing = snap.data() as MarketplaceListing;
+    }
+  } catch (err) {
+    console.warn('Firestore fetch listing for buy now error:', err);
+  }
+
+  if (!listing) {
+    listing = localListingsMemory.find((l) => l.id === listingId) || null;
+  }
+
+  if (!listing || listing.status !== 'active') {
+    throw new Error('Listing is no longer active.');
+  }
+
+  if (listing.sellerId === buyer.id) {
+    throw new Error('You cannot buy your own item.');
+  }
+
+  const price = Math.max(1, listing.currentBid || listing.startingBid || 1);
+  const buyerAvailable = (buyer.krests || 0) - (buyer.reservedKrests || 0);
+
+  if (buyerAvailable < price) {
+    throw new Error(`Insufficient Krests. You have ${buyerAvailable} Krests available.`);
+  }
+
+  // Get current logged in user ID to guard notifications
+  let currentLoggedInUserId = '';
+  try {
+    const stored = localStorage.getItem('kreational_current_user');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
+    }
+  } catch (e) {}
+
+  // If there was a previous bidder on this listing, refund their bid!
+  if (listing.highestBidderId && listing.highestBidderId !== buyer.id) {
+    try {
+      const prevDocRef = doc(db, USERS_COLLECTION, listing.highestBidderId);
+      const prevSnap = await getDoc(prevDocRef);
+      if (prevSnap.exists()) {
+        const prevAccount = prevSnap.data();
+        const prevUser: User = prevAccount.user;
+        const updatedPrevUser: User = {
+          ...prevUser,
+          krests: (prevUser.krests || 0) + listing.currentBid,
+          reservedKrests: 0,
+        };
+        await saveFullUserAccountToFirestore(updatedPrevUser);
+
+        if (listing.highestBidderId === currentLoggedInUserId) {
+          try {
+            localStorage.setItem('kreational_user', JSON.stringify(updatedPrevUser));
+          } catch (e) {}
+          triggerNotification(
+            '🎉 Bid Refunded!',
+            `The item ${listing.itemInstance.name} was purchased by another buyer. ${listing.currentBid} Krests refunded to your balance!`
+          );
+        }
+      }
+    } catch (err) {
+      console.warn('Error refunding previous bidder on buy now:', err);
+    }
+  }
+
+  const boughtItem = { ...listing.itemInstance, isListed: false };
+
+  // Update Buyer Account: deduct price, add item to inventory
+  const buyerInv = buyer.inventory || [];
+  const updatedBuyer: User = {
+    ...buyer,
+    krests: Math.max(0, (buyer.krests || 0) - price),
+    reservedKrests: 0,
+    inventory: [boughtItem, ...buyerInv],
+  };
+
+  await saveFullUserAccountToFirestore(updatedBuyer);
+  if (buyer.id === currentLoggedInUserId) {
+    try {
+      safeSet('kreational_user', JSON.stringify(updatedBuyer));
+      localStorage.setItem('kreational_current_user', JSON.stringify(updatedBuyer));
+      window.dispatchEvent(new Event('user_updated'));
+    } catch (e) {}
+  }
+
+  // Update Seller Account: add price to Krests, remove item from inventory
+  try {
+    const sellerRef = doc(db, USERS_COLLECTION, listing.sellerId);
+    const sellerSnap = await getDoc(sellerRef);
+    if (sellerSnap.exists()) {
+      const sellerAccount = sellerSnap.data();
+      const sellerUser: User = sellerAccount.user;
+      const sellerInv = (sellerUser.inventory || []).filter(
+        (i) => i.instanceId !== listing!.itemInstance.instanceId
+      );
+      const updatedSellerUser: User = {
+        ...sellerUser,
+        krests: (sellerUser.krests || 0) + price,
+        inventory: sellerInv,
+      };
+      await saveFullUserAccountToFirestore(updatedSellerUser);
+
+      if (listing.sellerId === currentLoggedInUserId) {
+        try {
+          safeSet('kreational_user', JSON.stringify(updatedSellerUser));
+          localStorage.setItem('kreational_current_user', JSON.stringify(updatedSellerUser));
+          window.dispatchEvent(new Event('user_updated'));
+        } catch (e) {}
+        triggerNotification(
+          '🎉 Item Sold!',
+          `${buyer.username} bought ${boughtItem.name} for ${price} Krests!`
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Error updating seller account on buy now:', err);
+  }
+
+  // Update Listing
+  const completedListing: MarketplaceListing = {
+    ...listing,
+    status: 'sold',
+    highestBidderId: buyer.id,
+    highestBidderUsername: buyer.username,
+    cashedOutAt: Date.now(),
+  };
+
+  try {
+    const docRef = doc(db, LISTINGS_COLLECTION, listingId);
+    await setDoc(docRef, completedListing, { merge: true });
+  } catch (err) {
+    console.warn('Firestore set sold listing error:', err);
+  }
+
+  // Save History
+  const historyEntry: MarketplaceHistoryEntry = {
+    id: `HIST-${Date.now()}`,
+    listingId,
+    sellerId: listing.sellerId,
+    sellerUsername: listing.sellerUsername,
+    buyerId: buyer.id,
+    buyerUsername: buyer.username,
+    itemInstance: boughtItem,
+    finalPrice: price,
+    timestamp: Date.now(),
+  };
+
+  try {
+    const histRef = doc(db, HISTORY_COLLECTION, historyEntry.id);
+    await setDoc(histRef, historyEntry);
+  } catch (err) {
+    console.warn('Firestore history record error:', err);
+  }
+
+  localListingsMemory = localListingsMemory.map((l) =>
+    l.id === listingId ? completedListing : l
+  );
+  localHistoryMemory = [historyEntry, ...localHistoryMemory];
+
+  if (buyer.id === currentLoggedInUserId) {
+    triggerNotification(
+      '🎉 Item Purchased!',
+      `You bought ${boughtItem.name} for ${price} Krests!`
+    );
+  }
+
+  return { updatedBuyer, completedListing };
 }
 
 export async function cashOutListingInStore(
@@ -300,7 +588,17 @@ export async function cashOutListingInStore(
   const finalPrice = listing.currentBid;
   const soldItem = { ...listing.itemInstance, isListed: false };
 
-  // Update Winning Bidder Account: deduct total Krests & reserved Krests, add item to inventory
+  // Get current logged in user ID to guard client notifications and local sync
+  let currentLoggedInUserId = '';
+  try {
+    const stored = localStorage.getItem('kreational_current_user');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
+    }
+  } catch (e) {}
+
+  // Update Winning Bidder Account: add item to inventory (Krests were already paid during bidding)
   try {
     const winnerDocRef = doc(db, USERS_COLLECTION, winningBidderId);
     const winnerSnap = await getDoc(winnerDocRef);
@@ -311,12 +609,19 @@ export async function cashOutListingInStore(
 
       const updatedWinnerUser: User = {
         ...winnerUser,
-        krests: Math.max(0, (winnerUser.krests || 0) - finalPrice),
-        reservedKrests: Math.max(0, (winnerUser.reservedKrests || 0) - finalPrice),
+        reservedKrests: 0,
         inventory: [soldItem, ...winnerInv],
       };
 
       await saveFullUserAccountToFirestore(updatedWinnerUser);
+
+      if (winningBidderId === currentLoggedInUserId) {
+        try {
+          safeSet('kreational_user', JSON.stringify(updatedWinnerUser));
+          localStorage.setItem('kreational_current_user', JSON.stringify(updatedWinnerUser));
+          window.dispatchEvent(new Event('user_updated'));
+        } catch (e) {}
+      }
     }
   } catch (err) {
     console.warn('Error finalizing winner account during cash out:', err);
@@ -330,10 +635,19 @@ export async function cashOutListingInStore(
   const updatedSeller: User = {
     ...seller,
     krests: (seller.krests || 0) + finalPrice,
+    reservedKrests: 0,
     inventory: sellerInventory,
   };
 
   await saveFullUserAccountToFirestore(updatedSeller);
+
+  if (seller.id === currentLoggedInUserId) {
+    try {
+      safeSet('kreational_user', JSON.stringify(updatedSeller));
+      localStorage.setItem('kreational_current_user', JSON.stringify(updatedSeller));
+      window.dispatchEvent(new Event('user_updated'));
+    } catch (e) {}
+  }
 
   // Update Listing Status
   const completedListing: MarketplaceListing = {
@@ -375,14 +689,15 @@ export async function cashOutListingInStore(
   localHistoryMemory = [historyEntry, ...localHistoryMemory];
 
   // Get current logged in user ID to guard client notifications
-  let currentLoggedInUserId = '';
-  try {
-    const stored = localStorage.getItem('kreational_current_user');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
-    }
-  } catch (e) {}
+  if (!currentLoggedInUserId) {
+    try {
+      const stored = localStorage.getItem('kreational_current_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
+      }
+    } catch (e) {}
+  }
 
   if (seller.id === currentLoggedInUserId) {
     triggerNotification(
@@ -427,7 +742,7 @@ export async function cancelListingInStore(
     throw new Error('You can only cancel your own listings.');
   }
 
-  // If there was a bidder, release bidder's reserved Krests
+  // If there was a bidder, refund listing.currentBid to bidder's Krests
   if (listing.highestBidderId) {
     try {
       const bidderRef = doc(db, USERS_COLLECTION, listing.highestBidderId);
@@ -437,15 +752,33 @@ export async function cancelListingInStore(
         const bidderUser: User = bidderAccount.user;
         const updatedBidder: User = {
           ...bidderUser,
-          reservedKrests: Math.max(
-            0,
-            (bidderUser.reservedKrests || 0) - listing.currentBid
-          ),
+          krests: (bidderUser.krests || 0) + listing.currentBid,
+          reservedKrests: 0,
         };
         await saveFullUserAccountToFirestore(updatedBidder);
+
+        // Sync local storage if current user is highest bidder
+        let currentLoggedInUserId = '';
+        try {
+          const stored = localStorage.getItem('kreational_current_user');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
+          }
+        } catch (e) {}
+
+        if (listing.highestBidderId === currentLoggedInUserId) {
+          try {
+            localStorage.setItem('kreational_user', JSON.stringify(updatedBidder));
+          } catch (e) {}
+          triggerNotification(
+            'Auction Cancelled',
+            `${listing.currentBid} Krests were refunded because the listing was cancelled.`
+          );
+        }
       }
     } catch (err) {
-      console.warn('Error releasing bidder reserved Krests on cancel:', err);
+      console.warn('Error refunding bidder Krests on cancel:', err);
     }
   }
 

@@ -36,8 +36,11 @@ import {
 import { SFX } from '../utils/sfx';
 import {
   fetchAllListings,
+  subscribeToListings,
+  subscribeToHistory,
   createListingInStore,
   placeBidInStore,
+  buyNowInStore,
   cashOutListingInStore,
   cancelListingInStore,
   fetchMarketplaceHistory,
@@ -96,7 +99,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
   onUpdateUser,
   onNavigateHome,
 }) => {
-  const [activeTab, setActiveTab] = useState<'browse' | 'limited' | 'my-stand' | 'my-bids' | 'history'>(
+  const [activeTab, setActiveTab] = useState<'browse' | 'limited' | 'my-listings' | 'my-bids' | 'history'>(
     'browse'
   );
   const [viewMode, setViewMode] = useState<'horizontal' | 'grid'>('horizontal');
@@ -127,28 +130,39 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
 
   const availableKrests = Math.max(0, (user.krests || 0) - (user.reservedKrests || 0));
 
-  // Load listings and history
-  const loadData = async () => {
-    const storeListings = await fetchAllListings();
-    const storeHistory = await fetchMarketplaceHistory();
-    setListings(storeListings);
-    setHistory(storeHistory);
-    setLoading(false);
-  };
+  const listingsRef = useRef<MarketplaceListing[]>([]);
+  listingsRef.current = listings;
 
+  // Real-time Firestore subscription for listings & history
   useEffect(() => {
-    loadData();
-    const interval = setInterval(async () => {
-      await loadData();
-      await runBotMarketplaceSimulation(
-        listings,
-        createListingInStore,
-        placeBidInStore,
-        cashOutListingInStore
-      );
-    }, 6000); // refresh & simulate every 6s
-    return () => clearInterval(interval);
-  }, [listings]);
+    setLoading(true);
+
+    const unsubscribeListings = subscribeToListings((updatedListings) => {
+      setListings(updatedListings);
+      setLoading(false);
+    });
+
+    const unsubscribeHistory = subscribeToHistory((updatedHistory) => {
+      setHistory(updatedHistory);
+    });
+
+    const botInterval = setInterval(async () => {
+      try {
+        await runBotMarketplaceSimulation(
+          listingsRef.current,
+          createListingInStore,
+          placeBidInStore,
+          cashOutListingInStore
+        );
+      } catch (e) {}
+    }, 6000);
+
+    return () => {
+      unsubscribeListings();
+      unsubscribeHistory();
+      clearInterval(botInterval);
+    };
+  }, []);
 
   // Filter & Sort active listings
   const activeListings = listings.filter((l) => l.status === 'active');
@@ -177,7 +191,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
     });
 
   // User specific subsets
-  const myStandListings = activeListings.filter((l) => l.sellerId === user.id);
+  const myListings = activeListings.filter((l) => l.sellerId === user.id);
   const myActiveBidsListings = activeListings.filter(
     (l) => l.bidHistory && l.bidHistory.some((b) => b.bidderId === user.id)
   );
@@ -257,20 +271,22 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
           </p>
         </div>
 
-        {/* Current Bid Stats */}
+        {/* Price / Bid Stats */}
         <div className="p-2.5 rounded-2xl bg-black/60 border border-white/10 space-y-1 text-xs">
           <div className="flex items-center justify-between">
-            <span className="text-slate-400 text-[11px]">Current Bid:</span>
+            <span className="text-slate-400 text-[11px]">{listing.isLimited ? 'Current Bid:' : 'Price:'}</span>
             <span className="font-mono font-extrabold text-amber-300 text-sm">
-              {listing.currentBid} Krests
+              {listing.currentBid || listing.startingBid} Krests
             </span>
           </div>
-          <div className="flex items-center justify-between text-[10px] text-slate-400">
-            <span>Highest Bidder:</span>
-            <span className="font-bold text-purple-300 truncate max-w-[100px]">
-              {listing.highestBidderUsername || 'No bids yet'}
-            </span>
-          </div>
+          {listing.isLimited && (
+            <div className="flex items-center justify-between text-[10px] text-slate-400">
+              <span>Highest Bidder:</span>
+              <span className="font-bold text-purple-300 truncate max-w-[100px]">
+                {listing.highestBidderUsername || 'No bids yet'}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Action Button */}
@@ -294,18 +310,53 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                 </button>
               )}
             </div>
+          ) : listing.isLimited ? (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleBuyNow(listing)}
+                className="py-2.5 rounded-xl font-black text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-md shadow-emerald-950/50 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-wider"
+                title="Instantly buy this limited edition item"
+              >
+                <Tag className="w-3.5 h-3.5" />
+                <span>Buy ({listing.currentBid || listing.startingBid})</span>
+              </button>
+              <button
+                onClick={() => handleOpenBidModal(listing)}
+                className="py-2.5 rounded-xl font-black text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-950/50 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-wider"
+                title="Place a higher auction bid"
+              >
+                <Gavel className="w-3.5 h-3.5" />
+                <span>Bid</span>
+              </button>
+            </div>
           ) : (
             <button
-              onClick={() => handleOpenBidModal(listing)}
-              className="w-full py-2.5 rounded-xl font-black text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-950/50 transition-all cursor-pointer flex items-center justify-center gap-1.5 uppercase tracking-wide"
+              onClick={() => handleBuyNow(listing)}
+              className="w-full py-2.5 rounded-xl font-black text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-md shadow-emerald-950/50 transition-all cursor-pointer flex items-center justify-center gap-1.5 uppercase tracking-wide"
             >
-              <Gavel className="w-3.5 h-3.5" />
-              <span>Place Bid</span>
+              <Tag className="w-3.5 h-3.5" />
+              <span>Buy Now ({listing.currentBid || listing.startingBid} Krests)</span>
             </button>
           )}
         </div>
       </div>
     );
+  };
+
+  // Direct Buy Handler
+  const handleBuyNow = async (listing: MarketplaceListing) => {
+    try {
+      const { updatedBuyer } = await buyNowInStore(user, listing.id);
+      SFX.playCoin();
+      onUpdateUser(updatedBuyer);
+      setStatusMessage({
+        text: `Successfully bought ${listing.itemInstance.name} for ${listing.currentBid || listing.startingBid} Krests!`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      SFX.playError();
+      setStatusMessage({ text: err.message || 'Failed to buy item.', type: 'error' });
+    }
   };
 
   // Handle Open Bid Modal
@@ -333,7 +384,6 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         type: 'success',
       });
       setBiddingListing(null);
-      await loadData();
     } catch (err: any) {
       SFX.playError();
       setStatusMessage({ text: err.message || 'Failed to place bid.', type: 'error' });
@@ -352,7 +402,6 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
         type: 'success',
       });
       setCashOutListingModal(null);
-      await loadData();
     } catch (err: any) {
       SFX.playError();
       setStatusMessage({ text: err.message || 'Cash out failed.', type: 'error' });
@@ -367,7 +416,6 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       SFX.playSuccess();
       onUpdateUser(updatedSeller);
       setStatusMessage({ text: 'Listing cancelled successfully.', type: 'success' });
-      await loadData();
     } catch (err: any) {
       SFX.playError();
       setStatusMessage({ text: err.message || 'Cancel failed.', type: 'error' });
@@ -395,13 +443,12 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       SFX.playSuccess();
       onUpdateUser(updatedSeller);
       setStatusMessage({
-        text: `Successfully listed ${selectedInventoryItem.name}${isLimitedInput ? ' (Limited Edition)' : ''} on your Marketplace Stand for starting bid of ${startingBidInput} Krests!`,
+        text: `Successfully listed ${selectedInventoryItem.name}${isLimitedInput ? ' (Limited Edition)' : ''} on the Marketplace for starting bid of ${startingBidInput} Krests!`,
         type: 'success',
       });
       setIsCreateListingOpen(false);
       setSelectedInventoryItem(null);
       setIsLimitedInput(false);
-      await loadData();
     } catch (err: any) {
       SFX.playError();
       setStatusMessage({ text: err.message || 'Failed to list item.', type: 'error' });
@@ -438,7 +485,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                   </h1>
                 </div>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  Player-to-Player Stand & Collectibles Exchange
+                  Player-to-Player Tool & Power-Up Marketplace
                 </p>
               </div>
             </div>
@@ -485,7 +532,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
               }`}
             >
               <Store className="w-4 h-4 text-amber-400" />
-              <span>Merchant Stands</span>
+              <span>All Listings</span>
               <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono text-white">
                 {activeListings.length}
               </span>
@@ -503,7 +550,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
               }`}
             >
               <Lock className="w-4 h-4 text-amber-400" />
-              <span>Limited Stands</span>
+              <span>Limited Auctions</span>
               <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
                 {activeListings.filter((l) => l.isLimited).length}
               </span>
@@ -512,18 +559,18 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             <button
               onClick={() => {
                 SFX.playClick();
-                setActiveTab('my-stand');
+                setActiveTab('my-listings');
               }}
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                activeTab === 'my-stand'
+                activeTab === 'my-listings'
                   ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/60 border border-purple-400'
                   : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-white/5'
               }`}
             >
               <Tag className="w-4 h-4 text-purple-300" />
-              <span>My Stand</span>
+              <span>My Listings</span>
               <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
-                {myStandListings.length}
+                {myListings.length}
               </span>
             </button>
 
@@ -648,10 +695,10 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                 </div>
                 <div>
                   <h2 className="text-base font-black text-white uppercase font-mono tracking-wide flex items-center gap-2">
-                    <span>{activeTab === 'limited' ? 'LIMITED EDITION STAND ALLEY' : 'BAZAAR STAND ALLEY'}</span>
+                    <span>{activeTab === 'limited' ? 'LIMITED EDITION AUCTIONS' : 'MARKETPLACE LISTINGS'}</span>
                   </h2>
                   <p className="text-xs text-slate-400">
-                    Scroll left or right from Stand to Stand to explore active merchant auctions.
+                    Explore active tool power-up listings and auctions from players and sellers.
                   </p>
                 </div>
               </div>
@@ -707,10 +754,10 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
               </div>
             </div>
 
-            {/* Stand Track or Grid */}
+            {/* Listing Track or Grid */}
             {loading ? (
               <div className="p-12 text-center text-slate-400 text-sm">
-                Loading active Merchant Stands...
+                Loading active listings...
               </div>
             ) : (
               (() => {
@@ -722,15 +769,15 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                   return (
                     <div className="p-12 text-center rounded-3xl bg-slate-900/40 border border-slate-800 space-y-3">
                       <Store className="w-12 h-12 text-slate-600 mx-auto" />
-                      <h3 className="font-bold text-slate-300 text-base">No merchant stands available.</h3>
+                      <h3 className="font-bold text-slate-300 text-base">No active listings available.</h3>
                       <p className="text-xs text-slate-400">
-                        Be the first to list a utility item on your own Merchant Stand!
+                        Be the first to list a tool power-up on the Marketplace!
                       </p>
                       <button
                         onClick={() => setIsCreateListingOpen(true)}
                         className="mt-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-bold text-xs text-white shadow-lg cursor-pointer"
                       >
-                        List Item on My Stand
+                        List Item Now
                       </button>
                     </div>
                   );
@@ -759,17 +806,17 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
           </div>
         )}
 
-        {/* TAB 2: MY STAND */}
-        {activeTab === 'my-stand' && (
+        {/* TAB 2: MY LISTINGS */}
+        {activeTab === 'my-listings' && (
           <div className="space-y-6">
             <div className="p-6 rounded-3xl bg-slate-900/80 border border-purple-500/30 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                   <Store className="w-5 h-5 text-amber-400" />
-                  <span>{user.username}'s Marketplace Stand</span>
+                  <span>{user.username}'s Active Listings</span>
                 </h2>
                 <p className="text-xs text-slate-300 mt-1">
-                  Manage active listings on your stand. When you are satisfied with a bid, click Cash Out to receive Krests!
+                  Manage your active listings. Cash out winning bids or list new utility items!
                 </p>
               </div>
 
@@ -782,12 +829,12 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
               </button>
             </div>
 
-            {myStandListings.length === 0 ? (
+            {myListings.length === 0 ? (
               <div className="p-12 text-center rounded-3xl bg-slate-900/40 border border-slate-800 space-y-3">
                 <Tag className="w-12 h-12 text-slate-600 mx-auto" />
-                <h3 className="font-bold text-slate-300 text-base">You have no items on your Stand.</h3>
+                <h3 className="font-bold text-slate-300 text-base">You have no active listings.</h3>
                 <p className="text-xs text-slate-300">
-                  List utility items from your inventory to start earning Krests from player bids!
+                  List tool power-ups from your inventory to start earning Krests!
                 </p>
                 <button
                   onClick={() => setIsCreateListingOpen(true)}
@@ -798,7 +845,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {myStandListings.map((listing) => (
+                {myListings.map((listing) => (
                   <div
                     key={listing.id}
                     className="p-5 rounded-3xl bg-slate-900 border border-amber-500/40 shadow-xl space-y-4"
@@ -878,13 +925,13 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                 <Gavel className="w-12 h-12 text-slate-600 mx-auto" />
                 <h3 className="font-bold text-slate-300 text-base">You have no active bids.</h3>
                 <p className="text-xs text-slate-300">
-                  Browse player stands and place a bid on rare utility items!
+                  Browse active listings and place a bid on rare utility items!
                 </p>
                 <button
                   onClick={() => setActiveTab('browse')}
                   className="mt-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 font-bold text-xs text-white shadow-lg cursor-pointer"
                 >
-                  Browse Stands Now
+                  Browse Listings Now
                 </button>
               </div>
             ) : (
@@ -1097,7 +1144,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             </div>
 
             <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-[11px] text-amber-200/90 leading-relaxed">
-              <strong>Notice:</strong> {proposedBidAmount} Krests will be reserved from your available balance until you are outbid or the seller cashes out. The seller does NOT receive Krests until cash out!
+              <strong>Instant Refund Protection:</strong> Bidding {proposedBidAmount} Krests will deduct {proposedBidAmount} Krests from your active balance. If another bidder or bot outbids you, your full bid amount will be instantly refunded back to your account!
             </div>
 
             <div className="flex items-center gap-3 pt-2">
@@ -1175,7 +1222,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-center gap-2">
                 <Tag className="w-5 h-5 text-amber-400" />
-                <h3 className="font-bold text-white text-lg">List Item on Marketplace Stand</h3>
+                <h3 className="font-bold text-white text-lg">List Item on Marketplace</h3>
               </div>
               <button
                 onClick={() => setIsCreateListingOpen(false)}
@@ -1186,7 +1233,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             </div>
 
             <p className="text-xs text-slate-300">
-              Select an unlisted utility item from your inventory to put up for auction on your Stand.
+              Select an unlisted utility item from your inventory to list on the Marketplace.
             </p>
 
             {/* Inventory Item Selection */}
@@ -1288,7 +1335,7 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                 }`}
               >
-                CREATE LISTING ON STAND
+                CREATE LISTING
               </button>
               <button
                 onClick={() => setIsCreateListingOpen(false)}

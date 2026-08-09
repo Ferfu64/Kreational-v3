@@ -118,7 +118,7 @@ export interface MarketplaceListing {
   highestBidderUsername: string | null;
   createdAt: number;
   bidHistory: BidRecord[];
-  status: 'active' | 'cashed_out' | 'cancelled';
+  status: 'active' | 'cashed_out' | 'cancelled' | 'sold';
   cashedOutAt?: number;
   isLimited?: boolean;
 }

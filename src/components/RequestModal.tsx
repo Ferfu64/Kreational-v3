@@ -98,9 +98,15 @@ export const RequestModal: React.FC<RequestModalProps> = ({
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (krests < 50) {
+
+    const requestTokenIdx = (user.inventory || []).findIndex(
+      (i) => i.itemId === 'request_token' && !i.isListed
+    );
+    const hasRequestToken = requestTokenIdx !== -1 || (user.freeRequestTokens || 0) > 0;
+
+    if (!hasRequestToken && krests < 50) {
       SFX.playError();
-      setError(`Sending a request costs 50 Krests! (You have ${krests} Krests).`);
+      setError(`Sending a request costs 50 Krests or 1 Request Token! (You have ${krests} Krests).`);
       return;
     }
 
@@ -139,16 +145,26 @@ export const RequestModal: React.FC<RequestModalProps> = ({
     try {
       await createRequestStore(newReq);
 
-      // Deduct 50 Krests cost
-      const updatedKrests = krests - 50;
-      const updatedUser: User = {
-        ...user,
-        krests: updatedKrests,
-      };
+      let updatedUser: User = { ...user };
+      let usedTokenMessage = '';
+
+      if (hasRequestToken) {
+        if (requestTokenIdx !== -1) {
+          const updatedInv = (user.inventory || []).filter((_, idx) => idx !== requestTokenIdx);
+          updatedUser.inventory = updatedInv;
+        } else {
+          updatedUser.freeRequestTokens = Math.max(0, (user.freeRequestTokens || 1) - 1);
+        }
+        usedTokenMessage = ' (Used 1 Request Token - 0 Krests deducted)';
+      } else {
+        updatedUser.krests = krests - 50;
+        usedTokenMessage = ' (-50 Krests)';
+      }
+
       onUpdateUser(updatedUser);
 
       SFX.playRequestSent();
-      setSuccess('🎉 Request sent successfully (-50 Krests)! Kreator admin will review it shortly.');
+      setSuccess(`🎉 Request sent successfully${usedTokenMessage}! Kreator admin will review it shortly.`);
       setTimeout(() => {
         onRequestSubmitted();
         onClose();

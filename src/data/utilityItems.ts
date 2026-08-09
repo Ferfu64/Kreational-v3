@@ -111,11 +111,11 @@ export const UTILITY_ITEMS_CATALOG: Record<string, CatalogUtilityItem> = {
   mythic_shard_token: {
     id: 'mythic_shard_token',
     name: 'Mythic Shard Token',
-    description: 'Can be redeemed or traded in the Marketplace to grant legendary status power-ups.',
+    description: 'Can be redeemed or traded in the Marketplace to grant status power-ups.',
     icon: '🔮',
     rarity: 'legendary',
     utilityEffect: {
-      type: 'stand_shard',
+      type: 'powerup_shard',
       value: 1,
       description: 'Rare crafting material for high-tier boosters.',
     },

@@ -24,6 +24,7 @@ import {
   Orbit,
   Radio,
   Bot,
+  Dices,
 } from 'lucide-react';
 import { VoiceManager } from '../assistant/VoiceManager';
 import { SFX } from '../utils/sfx';
@@ -116,7 +117,7 @@ export const KRATE_TIERS: KrateTier[] = [
     border: 'border-purple-400/80 hover:border-purple-300 shadow-purple-900/80',
     glow: 'shadow-purple-500/40 hover:shadow-purple-400/70',
     shardsRange: [2, 4],
-    description: '650 Krests. Cosmic Rift Unboxing. High chance for Mythic Stand Shard Tokens & Stand Shields!',
+    description: '650 Krests. Cosmic Rift Unboxing. High chance for Mythic Power-Up Shards & Shield Boosters!',
   },
   {
     id: 'overclocked_master',
@@ -315,6 +316,110 @@ export const ShopModal: React.FC<ShopModalProps> = ({
         }
       } catch (e) {}
     }, 2400);
+  };
+
+  const handleRerollKrate = () => {
+    if (!openingKrate) return;
+    const inv = user.inventory || [];
+    const rerollItemIdx = inv.findIndex(
+      (i) => (i.itemId === 'krate_reroll' || i.itemId === 'quantum_reroll_cube') && !i.isListed
+    );
+    if (rerollItemIdx === -1) return;
+
+    SFX.playPurchase();
+    // Consume 1 reroll item from inventory
+    let updatedInventory = inv.filter((_, idx) => idx !== rerollItemIdx);
+
+    // Remove previous utility item reward if it was already added from first unboxing roll!
+    if (reward?.utilityItem) {
+      const prevItemId = reward.utilityItem.id;
+      updatedInventory = updatedInventory.filter((item) => item.id !== prevItemId);
+    }
+
+    // Re-generate reward without charging Krests
+    const krate = openingKrate;
+    setUnboxingStep('spinning');
+
+    let shardsDropped = 0;
+    const dropChance = krate.id === 'bronze' ? 0.5 : krate.id === 'silver' ? 0.65 : 0.8;
+    if (Math.random() < dropChance) {
+      const minShards = krate.shardsRange[0] || 1;
+      const maxShards = krate.shardsRange[1];
+      shardsDropped = Math.floor(Math.random() * (maxShards - minShards + 1)) + minShards;
+    }
+
+    let chosenCosmetic: CosmeticOption | undefined = undefined;
+    let chosenUtilityItem: ItemInstance | undefined = undefined;
+    let bonusKrests = 0;
+    let alreadyOwned = false;
+
+    let currentUnlockedBgs = user.cosmetics?.unlockedBackgrounds || ['bg_neon_cyber'];
+    let currentUnlockedFrames = user.cosmetics?.unlockedFrames || ['frame_default'];
+    let currentUnlockedTitles = user.cosmetics?.unlockedTitles || ['Arcade Rookie', 'Glitch Runner'];
+
+    if (krate.category === 'utility') {
+      let itemKey = 'cyber_auto_bidder';
+      if (krate.id === 'cyber_tech') {
+        const pool = ['cyber_auto_bidder', 'fee_rebate_pass', 'krate_reroll', 'krest_booster'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+      } else if (krate.id === 'aetherial_mythic') {
+        const pool = ['mythic_shard_token', 'auction_shield_charm', 'temp_access_token', 'quantum_reroll_cube'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+      } else if (krate.id === 'overclocked_master') {
+        const pool = ['xp_booster_overclock', 'mythic_shard_token', 'auction_shield_charm'];
+        itemKey = pool[Math.floor(Math.random() * pool.length)];
+        bonusKrests = Math.floor(Math.random() * 300) + 200;
+      }
+      chosenUtilityItem = createItemInstance(itemKey, user.id);
+      updatedInventory.push(chosenUtilityItem);
+    } else {
+      const cosmeticsToPick = COSMETICS_CATALOG.filter((c) => {
+        if (krate.id === 'bronze') return c.rarity === 'common' || c.rarity === 'rare';
+        if (krate.id === 'silver') return c.rarity === 'rare' || c.rarity === 'epic';
+        return c.rarity === 'epic' || c.rarity === 'legendary';
+      });
+
+      chosenCosmetic = cosmeticsToPick[Math.floor(Math.random() * cosmeticsToPick.length)];
+      if (chosenCosmetic.type === 'background') {
+        if (currentUnlockedBgs.includes(chosenCosmetic.id)) alreadyOwned = true;
+        else currentUnlockedBgs.push(chosenCosmetic.id);
+      } else if (chosenCosmetic.type === 'frame') {
+        if (currentUnlockedFrames.includes(chosenCosmetic.id)) alreadyOwned = true;
+        else currentUnlockedFrames.push(chosenCosmetic.id);
+      } else if (chosenCosmetic.type === 'title') {
+        if (currentUnlockedTitles.includes(chosenCosmetic.name)) alreadyOwned = true;
+        else currentUnlockedTitles.push(chosenCosmetic.name);
+      }
+    }
+
+    const updatedUser: User = {
+      ...user,
+      krests: (user.krests || 0) + bonusKrests,
+      iconShards: (user.iconShards || 0) + shardsDropped,
+      inventory: updatedInventory,
+      cosmetics: {
+        ...user.cosmetics,
+        unlockedBackgrounds: currentUnlockedBgs,
+        unlockedFrames: currentUnlockedFrames,
+        unlockedTitles: currentUnlockedTitles,
+      },
+    };
+
+    onUpdateUser(updatedUser);
+
+    setTimeout(() => {
+      SFX.playUnboxing();
+      setReward({
+        shardsAdded: shardsDropped,
+        cosmetic: chosenCosmetic,
+        utilityItem: chosenUtilityItem,
+        bonusKrests,
+        alreadyOwned,
+        unlockedAZGAMES: false,
+      });
+      setUnboxingStep('revealed');
+      triggerNotification('🎲 Krate Rerolled!', 'You used a Krate Reroll item to redraw your rewards!');
+    }, 1800);
   };
 
   const closeUnboxing = () => {
@@ -777,6 +882,25 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {(() => {
+                    const hasRerollItem = (user.inventory || []).some(
+                      (i) => (i.itemId === 'krate_reroll' || i.itemId === 'quantum_reroll_cube') && !i.isListed
+                    );
+                    if (!hasRerollItem) return null;
+                    const count = (user.inventory || []).filter(
+                      (i) => (i.itemId === 'krate_reroll' || i.itemId === 'quantum_reroll_cube') && !i.isListed
+                    ).length;
+                    return (
+                      <button
+                        onClick={handleRerollKrate}
+                        className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold font-mono cursor-pointer transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-950/80 border border-purple-400/50"
+                      >
+                        <Dices className="w-4 h-4 text-amber-300 animate-spin" style={{ animationDuration: '4s' }} />
+                        <span>Reroll Reward ({count} Reroll Item{count > 1 ? 's' : ''} Owned)</span>
+                      </button>
+                    );
+                  })()}
 
                   <div className="flex items-center gap-3">
                     <button

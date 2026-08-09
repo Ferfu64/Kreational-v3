@@ -13,6 +13,7 @@ import { GameManagementPanel } from './components/GameManagementPanel';
 import { SettingsModal, UserSettings, DEFAULT_SETTINGS } from './components/SettingsModal';
 import { ProfileModal } from './components/ProfileModal';
 import { ShopModal } from './components/ShopModal';
+import { InventoryModal } from './components/InventoryModal';
 import { MarketplacePage } from './components/MarketplacePage';
 import { BrandingFooter } from './components/BrandingFooter';
 import { LoadingScreen } from './components/LoadingScreen';
@@ -34,7 +35,10 @@ import {
   fetchAllGamesStore,
   fetchAllRequestsStore,
   fetchAllUsers,
+  getUserDocFromFirestore,
+  subscribeToUserDoc,
   updateUserAccount,
+  authenticateAccount,
   saveFullUserAccountToFirestore,
   generateDatastoreSnapshot,
   applyDatastoreSnapshot,
@@ -104,9 +108,14 @@ export default function App() {
     const interval = setInterval(() => {
       setUser((currentUser) => {
         if (!currentUser) return null;
+        const isBoosterActive =
+          !!currentUser.krestBoosterExpiresAt &&
+          currentUser.krestBoosterExpiresAt > Date.now();
+        const earnedKrests = isBoosterActive ? 4 : 2;
+
         let updatedUser: User = {
           ...currentUser,
-          krests: (currentUser.krests || 0) + 2,
+          krests: (currentUser.krests || 0) + earnedKrests,
         };
 
         // Record online time quest progress (+1 minute)
@@ -119,7 +128,7 @@ export default function App() {
 
         safeSet('kreational_user', JSON.stringify(updatedUser));
         saveFullUserAccountToFirestore(updatedUser).catch(() => {});
-        handleTriggerKreditGain(2);
+        handleTriggerKreditGain(earnedKrests);
         return updatedUser;
       });
     }, 60000);
@@ -162,8 +171,39 @@ export default function App() {
   // Modals & Panels
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  // Real-time user document sync from Firestore server
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const unsubscribe = subscribeToUserDoc(user.id, (realtimeUser) => {
+      const { updatedUser } = normalizeUserWithProfile(realtimeUser);
+      setUser(updatedUser);
+      safeSet('kreational_user', JSON.stringify(updatedUser));
+    });
+
+    const handleUserUpdated = () => {
+      try {
+        const stored = safeGet('kreational_user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && userRef.current && parsed.id === userRef.current.id) {
+            setUser(parsed);
+          }
+        }
+      } catch (e) {}
+    };
+
+    window.addEventListener('user_updated', handleUserUpdated);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('user_updated', handleUserUpdated);
+    };
+  }, [user?.id]);
 
   // Poll unread notifications count from local storage
   useEffect(() => {
@@ -320,21 +360,19 @@ export default function App() {
         setUser(updatedUser);
         setToken(storedToken);
 
-        // Refresh user profile from Firestore
-        fetchAllUsers().then((allUsers) => {
-          const match = allUsers.find(
-            (u) => u.id === parsed.id || u.username.toLowerCase() === parsed.username.toLowerCase()
-          );
-          if (match) {
-            if (match.datastoreBackup) {
-              applyDatastoreSnapshot(match.datastoreBackup);
+        // Refresh user profile directly from Firestore document by ID
+        getUserDocFromFirestore(parsed.id)
+          .then((freshDoc) => {
+            if (freshDoc) {
+              if (freshDoc.datastoreBackup) {
+                applyDatastoreSnapshot(freshDoc.datastoreBackup);
+              }
+              const { updatedUser: freshUser } = normalizeUserWithProfile(freshDoc);
+              setUser(freshUser);
+              safeSet('kreational_user', JSON.stringify(freshUser));
             }
-            const { updatedUser: freshUser } = normalizeUserWithProfile(match);
-            setUser(freshUser);
-            safeSet('kreational_user', JSON.stringify(freshUser));
-            saveFullUserAccountToFirestore(freshUser).catch(() => {});
-          }
-        }).catch(console.error);
+          })
+          .catch(console.error);
       } catch (err) {
         safeRemove('kreational_user');
         safeRemove('kreational_token');
@@ -409,7 +447,13 @@ export default function App() {
         keyBuffer = (keyBuffer + e.key).slice(-20);
         if (keyBuffer.toLowerCase().endsWith('override')) {
           keyBuffer = '';
-          handleLoginSuccess(KREATOR_ADMIN_USER, `token-kreator-${Date.now()}`);
+          authenticateAccount('Kreator', 'Override').then((match) => {
+            if (match) {
+              handleLoginSuccess(match.user, match.token);
+            } else {
+              handleLoginSuccess(KREATOR_ADMIN_USER, `token-kreator-${Date.now()}`);
+            }
+          });
         }
       }
     };
@@ -648,6 +692,7 @@ export default function App() {
             onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenProfile={() => setIsProfileOpen(true)}
             onOpenShop={() => setIsShopOpen(true)}
+            onOpenInventory={() => setIsInventoryOpen(true)}
             onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
             onLogout={handleLogout}
             pendingRequestsCount={pendingRequestsCount}
@@ -812,6 +857,15 @@ export default function App() {
             onTriggerKreditGain={handleTriggerKreditGain}
           />
         )}
+
+        {/* User Collection & Inventory Modal */}
+        <InventoryModal
+          isOpen={isInventoryOpen}
+          onClose={() => setIsInventoryOpen(false)}
+          user={user}
+          onUpdateUser={handleUpdateUser}
+          onNavigateToMarketplace={() => handleSetActiveTab('marketplace')}
+        />
 
         {/* Global Kredit Flying Coin Animation overlay */}
         <KreditGainAnimation

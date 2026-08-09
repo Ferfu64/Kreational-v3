@@ -141,7 +141,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               </span>
             </h3>
             <p className="text-xs text-slate-300 mt-0.5">
-              Manage your utility items, activate power-ups, or list items on the Marketplace Stand.
+              Manage your utility items, activate power-ups, or list items on the Marketplace.
             </p>
           </div>
         </div>
@@ -326,13 +326,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                 <div>
                   <strong className="block text-rose-300 font-bold">Currently Listed on Marketplace</strong>
-                  <span>This item is active on your Marketplace Stand. It cannot be used or re-listed until the listing ends.</span>
+                  <span>This item is active on the Marketplace. It cannot be used or re-listed until the listing ends.</span>
                 </div>
               </div>
             ) : (
               <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Ready in Inventory. Available for use or listing on Marketplace Stand.</span>
+                <span>Ready in Inventory. Available for use or listing on the Marketplace.</span>
               </div>
             )}
 
@@ -384,7 +384,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   className="flex-1 py-3 px-4 rounded-xl font-bold text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Store className="w-4 h-4 text-amber-400" />
-                  <span>List on Stand</span>
+                  <span>List on Marketplace</span>
                 </button>
               )}
 

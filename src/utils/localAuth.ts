@@ -5,6 +5,8 @@ export const KREATOR_ADMIN_USER: User = {
   username: 'Kreator',
   secretWord: 'Override',
   role: 'admin',
+  krests: 250,
+  reservedKrests: 0,
   purchasedTiers: ['bronze', 'silver', 'gold', 'diamond', 'mythic', 'legendary', 'master', 'pro'],
   temporaryAccess: [],
   createdAt: Date.now(),

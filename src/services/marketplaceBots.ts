@@ -74,7 +74,7 @@ let botsMemoryCache: User[] = [];
 let isBotsInitialized = false;
 
 function generateBotItem(botId: string, idx: number): ItemInstance {
-  const keys = Object.keys(UTILITY_ITEMS_CATALOG);
+  const keys = ['krate_reroll', 'streak_shield', 'request_token', 'krest_booster'];
   const chosenKey = keys[(idx + Math.floor(Math.random() * keys.length)) % keys.length];
   return createItemInstance(chosenKey, botId);
 }
@@ -110,9 +110,23 @@ export function generateBotAccounts(): User[] {
   return bots;
 }
 
+function sanitizeBotInventory(bot: User): User {
+  const cleanKeys = ['krate_reroll', 'streak_shield', 'request_token', 'krest_booster'];
+  const sanitizedInv = (bot.inventory || []).map((item, idx) => {
+    const name = (item.name || '').toLowerCase();
+    const itemId = (item.itemId || '').toLowerCase();
+    if (name.includes('stand') || itemId.includes('stand') || name.includes('shard') || itemId.includes('shard') || name.includes('pass token')) {
+      const newKey = cleanKeys[idx % cleanKeys.length];
+      return createItemInstance(newKey, bot.id);
+    }
+    return item;
+  });
+  return { ...bot, inventory: sanitizedInv };
+}
+
 export async function ensureBotsInFirestore(): Promise<User[]> {
   const bots = generateBotAccounts();
-  if (isBotsInitialized) return bots;
+  if (isBotsInitialized) return botsMemoryCache.length > 0 ? botsMemoryCache : bots;
 
   try {
     const snap = await getDocs(collection(db, 'marketplace_bots'));
@@ -120,9 +134,14 @@ export async function ensureBotsInFirestore(): Promise<User[]> {
       for (const bot of bots) {
         await setDoc(doc(db, 'marketplace_bots', bot.id), bot);
       }
+      botsMemoryCache = bots;
     } else {
       const cloudBots: User[] = [];
-      snap.forEach((docSnap) => cloudBots.push(docSnap.data() as User));
+      snap.forEach((docSnap) => {
+        const rawBot = docSnap.data() as User;
+        const cleanBot = sanitizeBotInventory(rawBot);
+        cloudBots.push(cleanBot);
+      });
       if (cloudBots.length > 0) {
         botsMemoryCache = cloudBots;
       }
@@ -130,6 +149,7 @@ export async function ensureBotsInFirestore(): Promise<User[]> {
     isBotsInitialized = true;
   } catch (err) {
     console.warn('Bot Firestore sync fallback:', err);
+    botsMemoryCache = bots;
   }
 
   return botsMemoryCache;
@@ -168,8 +188,46 @@ export async function runBotMarketplaceSimulation(
     const bots = await ensureBotsInFirestore();
     const currentActive = activeListings.filter((l) => l.status === 'active');
 
-    // 1. Bot item listing: Ensure at least 8-12 active listings on the marketplace
-    if (currentActive.length < 10) {
+    let currentLoggedInUserId = '';
+    try {
+      const stored = localStorage.getItem('kreational_current_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
+      }
+    } catch (e) {}
+
+    // 1. Auto Cash-Out: Any BOT listing with 3 or more bids auto cashes out! Player stands stay active for player decision.
+    const botThreeBidListings = currentActive.filter(
+      (l) => l.status === 'active' && l.sellerId.startsWith('bot-') && l.bidHistory && l.bidHistory.length >= 3 && l.highestBidderId
+    );
+    if (botThreeBidListings.length > 0) {
+      const targetCashOut = botThreeBidListings[0];
+      const sellerBot = bots.find((b) => b.id === targetCashOut.sellerId) || {
+        id: targetCashOut.sellerId,
+        username: targetCashOut.sellerUsername,
+        role: 'user',
+        krests: 1000,
+        inventory: [targetCashOut.itemInstance],
+      } as User;
+
+      await cashOutFn(sellerBot, targetCashOut.id);
+
+      // Notify human player ONLY if they won the auction
+      if (targetCashOut.highestBidderId === currentLoggedInUserId) {
+        triggerNotification(
+          '🎉 Auction Won!',
+          `You won ${targetCashOut.itemInstance.name} from ${targetCashOut.sellerUsername} for ${targetCashOut.currentBid} Krests!`
+        );
+      }
+
+      isSimulationRunning = false;
+      return true;
+    }
+
+    // 2. Bot item listing: Keep 6-10 active bot listings on marketplace. Bot items are ALWAYS direct buy (isLimited: false) with fair price 100-600 Krests.
+    const botListingsCount = currentActive.filter((l) => l.sellerId.startsWith('bot-')).length;
+    if (botListingsCount < 8) {
       const bot = getRandomBot();
       let unlistedItem = (bot.inventory || []).find((i) => !i.isListed);
 
@@ -179,25 +237,23 @@ export async function runBotMarketplaceSimulation(
         bot.inventory = [...(bot.inventory || []), unlistedItem];
       }
 
-      const startingPrices = [50, 100, 150, 200, 250, 300, 500];
-      const startingBid = startingPrices[Math.floor(Math.random() * startingPrices.length)];
-      await createListingFn(bot, unlistedItem, startingBid);
+      // Fair price randomly generated between 100 and 600 Krests
+      const fairPrice = Math.floor(Math.random() * 501) + 100;
+      // Bot items are direct buy (isLimited = false)
+      await createListingFn(bot, unlistedItem, fairPrice, false);
       isSimulationRunning = false;
       return true;
     }
 
-    // 2. Counter-bidding on BOTH Player Listings & Community Listings (excluding Limited listings)
-    const biddableActiveListings = currentActive.filter((l) => !l.isLimited);
+    // 3. Bot Counter-bidding: Bots ONLY bid on PLAYER LIMITED listings (isLimited === true and seller is human)
+    const playerLimitedListings = currentActive.filter(
+      (l) => !l.sellerId.startsWith('bot-') && l.isLimited && (!l.bidHistory || l.bidHistory.length < 5)
+    );
 
-    if (biddableActiveListings.length > 0 && Math.random() < 0.75) {
-      // Prioritize human player listings to give instant active player feedback
-      const playerListings = biddableActiveListings.filter((l) => !l.sellerId.startsWith('bot-'));
-      const targetListing =
-        playerListings.length > 0 && Math.random() < 0.7
-          ? playerListings[Math.floor(Math.random() * playerListings.length)]
-          : biddableActiveListings[Math.floor(Math.random() * biddableActiveListings.length)];
+    if (playerLimitedListings.length > 0) {
+      const targetListing = playerLimitedListings[Math.floor(Math.random() * playerLimitedListings.length)];
 
-      // Choose an eligible bidder that is not the seller and not already the highest bidder
+      // Choose an eligible bidder bot (not seller, not current highest bidder)
       const eligibleBots = bots.filter(
         (b) => b.id !== targetListing.sellerId && b.id !== targetListing.highestBidderId
       );
@@ -207,54 +263,36 @@ export async function runBotMarketplaceSimulation(
         const nextBid = calculateNextBotBid(targetListing.currentBid);
         const availableKrests = (bidderBot.krests || 0) - (bidderBot.reservedKrests || 0);
 
-        // Max valuation threshold check
+        // Valuation check based on rarity
         const rarityValuation: Record<string, number> = {
-          common: 300,
-          uncommon: 500,
-          rare: 1000,
-          epic: 2000,
-          legendary: 4000,
+          common: 500,
+          uncommon: 900,
+          rare: 1800,
+          epic: 3500,
+          legendary: 7000,
         };
-        const maxValuation = rarityValuation[targetListing.itemInstance.rarity] || 600;
+        const maxValuation = rarityValuation[targetListing.itemInstance.rarity] || 1000;
 
         if (nextBid <= maxValuation && availableKrests >= nextBid) {
+          const prevHighestBidderId = targetListing.highestBidderId;
           await placeBidFn(bidderBot, targetListing.id, nextBid);
+
+          // Notify human player ONLY if they are the seller or if they were outbid
+          if (targetListing.sellerId === currentLoggedInUserId) {
+            triggerNotification(
+              'New Bid on Your Listing!',
+              `${bidderBot.username} placed a bid of ${nextBid} Krests on ${targetListing.itemInstance.name}!`
+            );
+          } else if (prevHighestBidderId === currentLoggedInUserId) {
+            triggerNotification(
+              '🎉 Outbid Notice!',
+              `${bidderBot.username} outbid you on ${targetListing.itemInstance.name} with ${nextBid} Krests! Your Krests were refunded.`
+            );
+          }
+
           isSimulationRunning = false;
           return true;
         }
-      }
-    }
-
-    // 3. Bot seller cash-out when an auction has bids
-    if (currentActive.length > 0 && Math.random() < 0.25) {
-      const biddedListings = currentActive.filter(
-        (l) => l.highestBidderId !== null && l.sellerId.startsWith('bot-')
-      );
-      if (biddedListings.length > 0) {
-        const listingToCashOut = biddedListings[Math.floor(Math.random() * biddedListings.length)];
-        const sellerBot = bots.find((b) => b.id === listingToCashOut.sellerId) || getRandomBot();
-
-        await cashOutFn(sellerBot, listingToCashOut.id);
-
-        // Notify human player if they won the auction!
-        let currentLoggedInUserId = '';
-        try {
-          const stored = localStorage.getItem('kreational_current_user');
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (parsed && parsed.id) currentLoggedInUserId = parsed.id;
-          }
-        } catch (e) {}
-
-        if (listingToCashOut.highestBidderId === currentLoggedInUserId) {
-          triggerNotification(
-            '🎉 Auction Won!',
-            `You won ${listingToCashOut.itemInstance.name} from ${listingToCashOut.sellerUsername} for ${listingToCashOut.currentBid} Krests!`
-          );
-        }
-
-        isSimulationRunning = false;
-        return true;
       }
     }
   } catch (err) {

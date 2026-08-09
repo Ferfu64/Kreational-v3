@@ -35,8 +35,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         keyBufferRef.current = (keyBufferRef.current + e.key).slice(-20);
         if (keyBufferRef.current.toLowerCase().endsWith('override')) {
           keyBufferRef.current = '';
-          // Instant automatic sign-in as Kreator Admin
-          onLoginSuccess(KREATOR_ADMIN_USER, `token-kreator-${Date.now()}`);
+          // Instant automatic sign-in as Kreator Admin with Firestore persistence
+          authenticateAccount('Kreator', 'Override').then((match) => {
+            if (match) {
+              onLoginSuccess(match.user, match.token);
+            } else {
+              onLoginSuccess(KREATOR_ADMIN_USER, `token-kreator-${Date.now()}`);
+            }
+          });
         }
       }
     };

@@ -239,13 +239,24 @@ export function applyStreakReward(user: User, day: number): StreakRewardResult {
 }
 
 export function normalizeUserWithProfile(user: User): { updatedUser: User; bonusKrestsGranted: number } {
-  let krests = user.krests !== undefined ? user.krests : (user.role === 'admin' ? 250 : 50);
-  let reservedKrests = user.reservedKrests || 0;
+  let krests = typeof user.krests === 'number' && !isNaN(user.krests)
+    ? user.krests
+    : (user.role === 'admin' ? 250 : 50);
+  let reservedKrests = user.reservedKrests !== undefined ? user.reservedKrests : 0;
   let iconShards = user.iconShards !== undefined ? user.iconShards : (user.role === 'admin' ? 10 : 0);
   let dailyStreak = user.dailyStreak || 1;
   let lastLoginDate = user.lastLoginDate || '';
   let activeStreakShields = user.activeStreakShields || 0;
-  let inventory = user.inventory && user.inventory.length > 0 ? user.inventory : generateStarterUtilityItems(user.id);
+  let inventory = Array.isArray(user.inventory) ? user.inventory : generateStarterUtilityItems(user.id);
+  // Sanitize legacy items (remove stands, shards, pass tokens)
+  inventory = inventory.filter((item) => {
+    const name = (item.name || '').toLowerCase();
+    const itemId = (item.itemId || '').toLowerCase();
+    if (name.includes('stand') || itemId.includes('stand') || name.includes('shard') || itemId.includes('shard') || name.includes('pass token')) {
+      return false;
+    }
+    return true;
+  });
   let bonusKrestsGranted = 0;
 
   const today = getTodayDateString();
@@ -261,12 +272,14 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     if (diffDays === 1) {
       dailyStreak += 1;
     } else if (diffDays > 1) {
-      // Check for streak shield protection
+      // Check for active streak shield protection
       if (activeStreakShields > 0) {
         activeStreakShields -= 1; // Shield absorbed the missed day
       } else {
-        // Check if user has an unlisted streak_shield in inventory to auto-consume
-        const shieldIdx = inventory.findIndex((i) => i.itemId === 'streak_shield' && !i.isListed);
+        // Check if user has an unlisted streak shield or charm in inventory to auto-consume
+        const shieldIdx = inventory.findIndex(
+          (i) => (i.itemId === 'streak_shield' || i.itemId === 'auction_shield_charm') && !i.isListed
+        );
         if (shieldIdx !== -1) {
           inventory = inventory.filter((_, idx) => idx !== shieldIdx); // consume shield
         } else {

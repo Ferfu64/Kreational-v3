@@ -6,6 +6,7 @@ import {
   setDoc,
   deleteDoc,
   query,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { User, Game, GameRequest, TierId, TemporaryAccess, RequestStatus } from '../types';
@@ -37,22 +38,76 @@ export interface UserAccountRecord {
   secretWord: string;
 }
 
-// Ensure initial Kreator Admin Account in Firestore
+// Ensure initial Kreator Admin Account in Firestore without overwriting existing data
 export async function ensureKreatorAdminInFirestore(): Promise<UserAccountRecord> {
-  const kreatorRecord: UserAccountRecord = {
-    user: KREATOR_ADMIN_USER,
-    secretWord: 'Override',
-  };
   try {
     const docRef = doc(db, USERS_COLLECTION, KREATOR_ADMIN_USER.id);
     const snap = await withTimeout(getDoc(docRef), 2500);
-    if (!snap.exists()) {
+    if (snap.exists()) {
+      const data = snap.data() as UserAccountRecord;
+      if (data && data.user) {
+        return data;
+      }
+    } else {
+      const kreatorRecord: UserAccountRecord = {
+        user: KREATOR_ADMIN_USER,
+        secretWord: 'Override',
+      };
       await withTimeout(setDoc(docRef, kreatorRecord), 2500);
+      return kreatorRecord;
     }
   } catch (err) {
     console.warn('Firestore ensure Kreator Admin failed:', err);
   }
-  return kreatorRecord;
+  return { user: KREATOR_ADMIN_USER, secretWord: 'Override' };
+}
+
+// Get User Document from Firestore by ID
+export async function getUserDocFromFirestore(userId: string): Promise<User | null> {
+  try {
+    const docRef = doc(db, USERS_COLLECTION, userId);
+    const snap = await withTimeout(getDoc(docRef), 3000);
+    if (snap.exists()) {
+      const data = snap.data() as UserAccountRecord;
+      if (data && data.user) {
+        return {
+          ...data.user,
+          secretWord: data.secretWord || data.user.secretWord,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('getUserDocFromFirestore error:', err);
+  }
+  return null;
+}
+
+// Subscribe to real-time updates for a user document in Firestore
+export function subscribeToUserDoc(userId: string, callback: (user: User) => void): () => void {
+  try {
+    const docRef = doc(db, USERS_COLLECTION, userId);
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as UserAccountRecord;
+          if (data && data.user) {
+            callback({
+              ...data.user,
+              secretWord: data.secretWord || data.user.secretWord,
+            });
+          }
+        }
+      },
+      (err) => {
+        console.warn('subscribeToUserDoc listener error:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('subscribeToUserDoc error:', err);
+    return () => {};
+  }
 }
 
 // AUTHENTICATION
@@ -64,11 +119,12 @@ export async function authenticateAccount(
   const cleanNameLower = cleanName.toLowerCase();
   const cleanWordLower = wordInput.trim().toLowerCase();
 
-  // 1. Direct Kreator admin check
+  // 1. Direct Kreator admin check - preserves Firestore document
   if (cleanNameLower === 'kreator' && (cleanWordLower === 'override' || cleanWordLower === 'tjkqqybv')) {
-    ensureKreatorAdminInFirestore().catch(() => {});
+    const adminRecord = await ensureKreatorAdminInFirestore();
+    const adminUser = adminRecord.user || KREATOR_ADMIN_USER;
     return {
-      user: KREATOR_ADMIN_USER,
+      user: adminUser,
       token: `token-kreator-${Date.now()}`,
     };
   }
@@ -134,7 +190,6 @@ export async function authenticateAccount(
 // USERS MANAGEMENT
 export async function fetchAllUsers(): Promise<User[]> {
   const userMap = new Map<string, User>();
-  userMap.set(KREATOR_ADMIN_USER.id, KREATOR_ADMIN_USER);
 
   try {
     const querySnapshot = await withTimeout(getDocs(collection(db, USERS_COLLECTION)), 3000);
@@ -156,6 +211,10 @@ export async function fetchAllUsers(): Promise<User[]> {
         userMap.set(a.user.id, { ...a.user, secretWord: a.secretWord || a.user.secretWord });
       }
     });
+  }
+
+  if (!userMap.has(KREATOR_ADMIN_USER.id)) {
+    userMap.set(KREATOR_ADMIN_USER.id, KREATOR_ADMIN_USER);
   }
 
   return Array.from(userMap.values());
@@ -208,7 +267,12 @@ export function applyDatastoreSnapshot(snapshotStr: string | undefined): boolean
     const parsed = JSON.parse(snapshotStr);
     if (typeof parsed === 'object' && parsed !== null) {
       Object.keys(parsed).forEach((key) => {
-        if (key !== '_user_state' && typeof parsed[key] === 'string') {
+        if (
+          key !== '_user_state' &&
+          key !== 'kreational_user' &&
+          key !== 'kreations_user' &&
+          typeof parsed[key] === 'string'
+        ) {
           safeSet(key, parsed[key] as string);
         }
       });
@@ -231,7 +295,7 @@ export async function saveFullUserAccountToFirestore(updatedUser: User): Promise
 
   try {
     const docRef = doc(db, USERS_COLLECTION, updatedUser.id);
-    await setDoc(docRef, accountRecord, { merge: true });
+    await setDoc(docRef, accountRecord);
   } catch (err) {
     console.warn('Firestore save full user account failed:', err);
   }

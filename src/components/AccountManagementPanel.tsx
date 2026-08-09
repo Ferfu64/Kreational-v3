@@ -90,12 +90,32 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
   };
 
   const handleGrantKrests = async (targetUser: User, amount: number) => {
-    const current = targetUser.krests || 0;
+    const current = targetUser.krests !== undefined ? targetUser.krests : (targetUser.role === 'admin' ? 250 : 50);
     const updatedKrests = Math.max(0, current + amount);
     try {
       await updateUserAccount(targetUser.id, { krests: updatedKrests });
+
+      // Immediate local state feedback
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === targetUser.id ? { ...a, krests: updatedKrests } : a))
+      );
+
+      // If active user is targetUser, sync local storage
+      try {
+        const stored = localStorage.getItem('kreational_user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.id === targetUser.id || parsed.username === targetUser.username)) {
+            const updatedCurrent = { ...parsed, krests: updatedKrests };
+            localStorage.setItem('kreational_user', JSON.stringify(updatedCurrent));
+            localStorage.setItem('kreational_current_user', JSON.stringify(updatedCurrent));
+          }
+        }
+      } catch (e) {}
+
       await fetchAccounts();
       if (onAccountsUpdated) onAccountsUpdated();
+      window.dispatchEvent(new Event('user_updated'));
     } catch (err) {
       console.warn('Grant Krests error:', err);
     }
@@ -106,7 +126,7 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
     setEditName(user.username);
     setEditSecretWord(user.secretWord || '');
     setEditTiers(user.purchasedTiers || []);
-    setEditKrests(user.krests || 0);
+    setEditKrests(user.krests !== undefined ? user.krests : (user.role === 'admin' ? 250 : 50));
   };
 
   const handleSaveEdit = async () => {
@@ -123,6 +143,31 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
         purchasedTiers: editTiers,
         krests: editKrests,
       });
+
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === editingUser.id
+            ? { ...a, username: cleanName, purchasedTiers: editTiers, krests: editKrests }
+            : a
+        )
+      );
+
+      try {
+        const stored = localStorage.getItem('kreational_user');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.id === editingUser.id || parsed.username === editingUser.username)) {
+            const updatedCurrent = {
+              ...parsed,
+              username: cleanName,
+              purchasedTiers: editTiers,
+              krests: editKrests,
+            };
+            localStorage.setItem('kreational_user', JSON.stringify(updatedCurrent));
+            localStorage.setItem('kreational_current_user', JSON.stringify(updatedCurrent));
+          }
+        }
+      } catch (e) {}
     } catch (err) {
       console.warn('Account update error:', err);
     }
@@ -130,6 +175,7 @@ export const AccountManagementPanel: React.FC<AccountManagementPanelProps> = ({
     setEditingUser(null);
     await fetchAccounts();
     if (onAccountsUpdated) onAccountsUpdated();
+    window.dispatchEvent(new Event('user_updated'));
     setUpdating(false);
   };
 

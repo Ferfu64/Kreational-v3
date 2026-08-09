@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { User } from '../types';
-import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell } from 'lucide-react';
+import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell, Package } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
@@ -12,6 +12,7 @@ interface NavbarProps {
   onOpenSettings: () => void;
   onOpenProfile: () => void;
   onOpenShop: () => void;
+  onOpenInventory?: () => void;
   onOpenNotifications?: () => void;
   onLogout: () => void;
   pendingRequestsCount?: number;
@@ -27,6 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
   onOpenProfile,
   onOpenShop,
+  onOpenInventory,
   onOpenNotifications,
   onLogout,
   pendingRequestsCount = 0,
@@ -134,6 +136,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
                 <span>Shop & Krates</span>
+              </button>
+
+              {/* My Inventory Button */}
+              <button
+                id="nav-inventory-button"
+                onClick={() => {
+                  SFX.playClick();
+                  onOpenInventory?.();
+                }}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-semibold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-sm"
+              >
+                <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
+                <span>My Inventory</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono text-purple-200">
+                  {user.inventory ? user.inventory.length : 0}
+                </span>
               </button>
 
               {/* My Request History Button */}

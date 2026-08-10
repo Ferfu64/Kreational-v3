@@ -18,16 +18,22 @@ export const GlobalAnnouncementBanner: React.FC = () => {
 
   useEffect(() => {
     // Listen to real-time updates from Firestore
-    const unsub = onSnapshot(doc(db, 'global_announcements', 'latest'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as GlobalAnnouncement;
-        setAnnouncement(data);
-        localStorage.setItem('kreational_global_announcement', JSON.stringify(data));
-      } else {
-        setAnnouncement(null);
-        localStorage.removeItem('kreational_global_announcement');
+    const unsub = onSnapshot(
+      doc(db, 'global_announcements', 'latest'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as GlobalAnnouncement;
+          setAnnouncement(data);
+          localStorage.setItem('kreational_global_announcement', JSON.stringify(data));
+        } else {
+          setAnnouncement(null);
+          localStorage.removeItem('kreational_global_announcement');
+        }
+      },
+      (err) => {
+        console.warn('Global announcement listener offline or connection error:', err);
       }
-    });
+    );
 
     const handleLocalUpdate = () => {
       try {

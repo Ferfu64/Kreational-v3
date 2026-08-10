@@ -53,6 +53,7 @@ import { GlobalAnnouncementBanner } from './components/GlobalAnnouncementBanner'
 import { AZGamesChallengesModal } from './components/AZGamesChallengesModal';
 import { KreatorFunPanel } from './components/KreatorFunPanel';
 import { KrozeZone } from './components/KrozeZone';
+import { GlobalCallAndMessageManager } from './components/GlobalCallAndMessageManager';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { NotificationDrawer } from './components/NotificationDrawer';
 import {
@@ -922,6 +923,9 @@ export default function App() {
             onClose={() => setIsRequestHistoryOpen(false)}
           />
         )}
+
+        {/* Global Real-Time Call and Message Manager Overlay */}
+        <GlobalCallAndMessageManager currentUser={user} />
 
         {/* Notification Toast Container */}
         <NotificationToastContainer />

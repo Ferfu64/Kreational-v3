@@ -7,6 +7,8 @@ import {
   Send,
   Gift,
   UserPlus,
+  UserMinus,
+  Trash2,
   QrCode,
   Copy,
   Check,
@@ -27,6 +29,9 @@ import {
   PhoneIncoming,
   Globe,
   Bot,
+  Share2,
+  Coins,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import { generateQRCodeSVG, getDeterministicFriendCode, formatFriendCode } from '../utils/qrCodeGenerator';
@@ -34,6 +39,7 @@ import { fetchAllUsers, saveFullUserAccountToFirestore } from '../services/fires
 import { db } from '../lib/firebase';
 import { doc, setDoc, getDoc, collection, onSnapshot, addDoc, query, where, orderBy } from 'firebase/firestore';
 import { triggerNotification } from '../utils/notificationManager';
+import { initiateCall, createPrivateCallRoom } from '../services/callService';
 
 interface KrozeZoneProps {
   user: User;
@@ -111,6 +117,11 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
   // Gift Krests state
   const [giftAmount, setGiftAmount] = useState<number>(100);
   const [giftStatus, setGiftStatus] = useState<{ text: string; success: boolean } | null>(null);
+  const [showGiftAnimation, setShowGiftAnimation] = useState(false);
+  const [isFriendPickerOpen, setIsFriendPickerOpen] = useState(false);
+
+  // Invite to Call Room state
+  const [inviteModal, setInviteModal] = useState<{ open: boolean; url: string; copied: boolean } | null>(null);
 
   // Copy Friend Code state
   const [copiedCode, setCopiedCode] = useState(false);
@@ -124,10 +135,10 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     fetchAllUsers().then((users) => {
       setAllUsers(users);
 
-      // Friends are stored on user.notifiedApprovals or derived
+      // Friends are stored on user.notifiedApprovals
       const friendIds = user.notifiedApprovals || [];
       const matched = users
-        .filter((u) => u.id !== user.id && (friendIds.includes(u.id) || u.isBot))
+        .filter((u) => u.id !== user.id && friendIds.includes(u.id))
         .map((u) => ({
           id: u.id,
           username: u.username,
@@ -149,16 +160,22 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     if (!selectedFriend) return;
 
     const chatDocId = [user.id, selectedFriend.id].sort().join('_');
-    const unsub = onSnapshot(doc(db, 'kroze_chats', chatDocId), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data && Array.isArray(data.messages)) {
-          setChatMessages(data.messages);
+    const unsub = onSnapshot(
+      doc(db, 'kroze_chats', chatDocId),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data && Array.isArray(data.messages)) {
+            setChatMessages(data.messages);
+          }
+        } else {
+          setChatMessages([]);
         }
-      } else {
-        setChatMessages([]);
+      },
+      (err) => {
+        console.warn('KrozeZone chat listener offline or error:', err);
       }
-    });
+    );
 
     return () => unsub();
   }, [selectedFriend?.id, user.id]);
@@ -259,7 +276,7 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Handle Add Friend via 10-Digit Code or QR Code string
+  // Handle Add Friend via 10-Digit Code or QR Code string (Bi-directional)
   const handleAddFriend = async () => {
     const cleanInput = friendCodeInput.replace(/\D/g, '');
     if (cleanInput.length < 5) {
@@ -274,15 +291,14 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     );
 
     if (!matchedUser) {
-      // Fallback: Pick a user or create friend
+      // Fallback: Pick another available account or create candidate
       const candidate = allUsers.find((u) => u.id !== user.id) || {
         id: `friend-${cleanInput}`,
         username: `KrozeGamer_${cleanInput.substring(0, 4)}`,
       };
 
-      const updatedFriends = Array.from(new Set([...(user.notifiedApprovals || []), candidate.id]));
-      const updatedUser: User = { ...user, notifiedApprovals: updatedFriends };
-
+      const userFriends = Array.from(new Set([...(user.notifiedApprovals || []), candidate.id]));
+      const updatedUser: User = { ...user, notifiedApprovals: userFriends };
       onUpdateUser(updatedUser);
       await saveFullUserAccountToFirestore(updatedUser);
 
@@ -292,16 +308,52 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
       return;
     }
 
-    const updatedFriends = Array.from(new Set([...(user.notifiedApprovals || []), matchedUser.id]));
-    const updatedUser: User = { ...user, notifiedApprovals: updatedFriends };
-
+    // Bi-directional friend connection
+    const userFriends = Array.from(new Set([...(user.notifiedApprovals || []), matchedUser.id]));
+    const updatedUser: User = { ...user, notifiedApprovals: userFriends };
     onUpdateUser(updatedUser);
     await saveFullUserAccountToFirestore(updatedUser);
 
+    // Also add current user to matchedUser's friend list!
+    const targetInAll = allUsers.find((u) => u.id === matchedUser.id);
+    if (targetInAll) {
+      const targetFriends = Array.from(new Set([...(targetInAll.notifiedApprovals || []), user.id]));
+      const updatedTarget: User = { ...targetInAll, notifiedApprovals: targetFriends };
+      await saveFullUserAccountToFirestore(updatedTarget);
+    }
+
     SFX.playSuccess();
-    triggerNotification('🤝 New Kroze Friend Added!', `You are now connected with ${matchedUser.username}!`);
-    setAddFriendStatus({ text: `🎉 Added ${matchedUser.username} as a Kroze Friend!`, success: true });
+    triggerNotification('🤝 New Kroze Friend Added!', `You and ${matchedUser.username} are now friends!`);
+    setAddFriendStatus({ text: `🎉 Connected as friends with ${matchedUser.username}!`, success: true });
     setFriendCodeInput('');
+  };
+
+  // Handle Unfriend
+  const handleUnfriend = async (friendId: string) => {
+    SFX.playClick();
+
+    // 1. Remove friendId from user.notifiedApprovals
+    const updatedUserFriends = (user.notifiedApprovals || []).filter((id) => id !== friendId);
+    const updatedUser: User = { ...user, notifiedApprovals: updatedUserFriends };
+    onUpdateUser(updatedUser);
+    await saveFullUserAccountToFirestore(updatedUser);
+
+    // 2. Remove user.id from friend's notifiedApprovals in Firestore
+    const friendAccount = allUsers.find((u) => u.id === friendId);
+    if (friendAccount) {
+      const updatedFriendApprovals = (friendAccount.notifiedApprovals || []).filter((id) => id !== user.id);
+      const updatedFriendAccount: User = { ...friendAccount, notifiedApprovals: updatedFriendApprovals };
+      await saveFullUserAccountToFirestore(updatedFriendAccount);
+    }
+
+    // 3. Clear selectedFriend if match
+    if (selectedFriend?.id === friendId) {
+      setSelectedFriend(null);
+    }
+
+    // 4. Update local friends state
+    setFriendsList((prev) => prev.filter((f) => f.id !== friendId));
+    setAddFriendStatus({ text: 'Removed friend successfully.', success: true });
   };
 
   // Send Text Message
@@ -326,39 +378,29 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
 
     try {
       await setDoc(doc(db, 'kroze_chats', chatDocId), { messages: updatedMessages });
-      triggerNotification(
-        `💬 Chat from ${user.username}`,
-        newMsg.text
-      );
+      // Notification is handled automatically on recipient's device by GlobalCallAndMessageManager
     } catch (e) {
       console.warn('Chat sync error:', e);
     }
   };
 
-  // Start Voice / Video Call
-  const handleStartCall = (type: 'audio' | 'video') => {
+  // Start Voice / Video Call via real-time callService
+  const handleStartCall = async (type: 'audio' | 'video') => {
     if (!selectedFriend) return;
     SFX.playClick();
 
-    setCallingState({
-      isActive: true,
-      type,
-      friend: selectedFriend,
-      isMuted: false,
-      isCamOff: false,
-      status: 'calling',
-    });
-
-    triggerNotification(
-      `📞 Incoming ${type.toUpperCase()} Call!`,
-      `${user.username} is calling you in Kroze Zone!`
-    );
-
-    // Simulate connecting call after 2 seconds
-    setTimeout(() => {
-      setCallingState((prev) => (prev.isActive ? { ...prev, status: 'connected' } : prev));
+    try {
+      await initiateCall(
+        user.id,
+        user.username,
+        selectedFriend.id,
+        selectedFriend.username,
+        type === 'video'
+      );
       SFX.playSuccess();
-    }, 2500);
+    } catch (e) {
+      console.warn('Failed to initiate call:', e);
+    }
   };
 
   // End Call
@@ -377,9 +419,38 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     }, 800);
   };
 
+  // Invite to Call via Shareable Room Link
+  const handleInviteToCall = async () => {
+    SFX.playClick();
+    try {
+      const { roomId, shareUrl } = await createPrivateCallRoom(user.id, user.username, true);
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        SFX.playSuccess();
+        triggerNotification('🔗 Call Link Copied!', 'Share this private link with your friend to start a call!');
+        setInviteModal({ open: true, url: shareUrl, copied: true });
+      } catch (e) {
+        setInviteModal({ open: true, url: shareUrl, copied: false });
+      }
+    } catch (err) {
+      console.warn('Failed to generate call room link:', err);
+    }
+  };
+
   // Send Krests to Friend
   const handleSendKrestsToFriend = async () => {
-    if (!selectedFriend || giftAmount <= 0) return;
+    if (!selectedFriend) {
+      SFX.playError();
+      setGiftStatus({ text: 'Please select a recipient friend first!', success: false });
+      setIsFriendPickerOpen(true);
+      return;
+    }
+    if (giftAmount <= 0) {
+      SFX.playError();
+      setGiftStatus({ text: 'Please enter a valid amount of Krests!', success: false });
+      return;
+    }
+
     const userKrests = user.krests || 0;
     if (userKrests < giftAmount) {
       SFX.playError();
@@ -389,6 +460,9 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
 
     try {
       SFX.playCoin();
+      setShowGiftAnimation(true);
+      setTimeout(() => setShowGiftAnimation(false), 3800);
+
       const updatedUser: User = {
         ...user,
         krests: userKrests - giftAmount,
@@ -404,9 +478,19 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
         await saveFullUserAccountToFirestore(updatedFriend);
       }
 
+      // Record gift transaction in Firestore 'kroze_gifts'
+      await addDoc(collection(db, 'kroze_gifts'), {
+        senderId: user.id,
+        senderName: user.username,
+        recipientId: selectedFriend.id,
+        recipientName: selectedFriend.username,
+        amount: giftAmount,
+        timestamp: Date.now(),
+      });
+
       triggerNotification(
-        '🎁 Received Krests!',
-        `${user.username} sent you +${giftAmount} Krests in Kroze Zone!`
+        '🎁 Gift Sent!',
+        `Successfully sent +${giftAmount} Krests to ${selectedFriend.username}!`
       );
 
       setGiftStatus({ text: `🎉 Sent +${giftAmount} Krests to ${selectedFriend.username}!`, success: true });
@@ -454,6 +538,15 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleInviteToCall}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs cursor-pointer flex items-center gap-1.5 shadow-md transition-transform active:scale-95"
+              title="Invite a friend to a private call room via link"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Invite to Call</span>
+            </button>
+
             {onOpenAZChallenges && (
               <button
                 onClick={() => {
@@ -676,16 +769,26 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          setSelectedFriend(f);
-                          setActiveTab('chat');
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-400/30 text-xs font-bold cursor-pointer flex items-center gap-1"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Chat</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedFriend(f);
+                            setActiveTab('chat');
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-400/30 text-xs font-bold cursor-pointer flex items-center gap-1"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>Chat</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleUnfriend(f.id)}
+                          className="p-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/30 text-xs font-bold cursor-pointer flex items-center gap-1"
+                          title="Unfriend User"
+                        >
+                          <UserMinus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -761,6 +864,13 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
                         title="Video Call"
                       >
                         <Video className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleUnfriend(selectedFriend.id)}
+                        className="p-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-400/40 cursor-pointer"
+                        title="Unfriend User"
+                      >
+                        <UserMinus className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -869,46 +979,177 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
 
         {/* Tab 4: Send Krests */}
         {activeTab === 'gift' && (
-          <div className="max-w-xl mx-auto p-6 rounded-3xl bg-slate-900/90 border border-amber-500/30 space-y-4 shadow-xl">
-            <h3 className="text-lg font-black text-white flex items-center gap-2">
-              <Gift className="w-5 h-5 text-amber-400" />
-              Gift Krests to a Kroze Friend
-            </h3>
+          <div className="max-w-xl mx-auto p-6 rounded-3xl bg-slate-900/90 border border-amber-500/30 space-y-5 shadow-xl">
+            <div className="flex items-center justify-between border-b border-amber-500/20 pb-3">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Gift className="w-5 h-5 text-amber-400" />
+                <span>Gift Krests to a Friend</span>
+              </h3>
+              <div className="px-3 py-1 rounded-xl bg-amber-500/10 border border-amber-400/30 font-mono text-xs font-black text-amber-300 flex items-center gap-1">
+                <Coins className="w-3.5 h-3.5" />
+                <span>Balance: {user.krests || 0} Krests</span>
+              </div>
+            </div>
 
-            <div className="space-y-3">
-              <label className="text-xs text-amber-200 font-bold block">Select Recipient Friend:</label>
-              <div className="grid grid-cols-2 gap-2">
-                {friendsList.map((f) => (
+            {/* Friend Selection Header / Picker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-amber-200 font-extrabold uppercase tracking-wider block">
+                  1. Which friend do you want to gift?
+                </label>
+                {friendsList.length > 0 && (
                   <button
-                    key={f.id}
-                    onClick={() => setSelectedFriend(f)}
-                    className={`p-3 rounded-2xl border text-left cursor-pointer transition-all ${
-                      selectedFriend?.id === f.id
-                        ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-bold'
-                        : 'bg-black/40 border-white/5 text-slate-300 hover:border-white/20'
+                    onClick={() => setIsFriendPickerOpen(true)}
+                    className="text-xs text-amber-400 hover:underline font-bold cursor-pointer"
+                  >
+                    {selectedFriend ? 'Change Friend' : 'Select Friend'}
+                  </button>
+                )}
+              </div>
+
+              {selectedFriend ? (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border-2 border-amber-400 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black text-lg">
+                      {selectedFriend.username.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="text-sm font-black text-white">{selectedFriend.username}</div>
+                      <div className="text-[10px] text-amber-300 font-mono">
+                        Code: {formatFriendCode(selectedFriend.friendCode)}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsFriendPickerOpen(true)}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer"
+                  >
+                    Switch
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsFriendPickerOpen(true)}
+                  className="w-full py-4 px-4 rounded-2xl bg-amber-500/10 border-2 border-dashed border-amber-400/50 hover:bg-amber-500/20 text-amber-300 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <Users className="w-4 h-4 text-amber-400" />
+                  <span>Click here to select which friend to gift Krests to</span>
+                </button>
+              )}
+            </div>
+
+            {/* Friend Picker Modal */}
+            {isFriendPickerOpen && (
+              <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+                <div className="w-full max-w-md p-6 rounded-3xl bg-slate-950 border-2 border-amber-400 shadow-2xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-amber-500/20 pb-3">
+                    <h4 className="text-base font-black text-white flex items-center gap-2">
+                      <Gift className="w-5 h-5 text-amber-400" />
+                      <span>Select Friend to Gift</span>
+                    </h4>
+                    <button
+                      onClick={() => setIsFriendPickerOpen(false)}
+                      className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {friendsList.length === 0 ? (
+                    <div className="text-center py-6 space-y-2">
+                      <p className="text-xs text-slate-400">You don't have any friends added yet.</p>
+                      <button
+                        onClick={() => {
+                          setIsFriendPickerOpen(false);
+                          setActiveTab('friends');
+                        }}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
+                      >
+                        Add Friends First
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                      {friendsList.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => {
+                            SFX.playClick();
+                            setSelectedFriend(f);
+                            setIsFriendPickerOpen(false);
+                          }}
+                          className={`w-full p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center justify-between ${
+                            selectedFriend?.id === f.id
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-bold'
+                              : 'bg-slate-900 border-white/10 text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-sm">
+                              {f.username.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-white">{f.username}</div>
+                              <div className="text-[10px] text-amber-300/80 font-mono">
+                                {formatFriendCode(f.friendCode)}
+                              </div>
+                            </div>
+                          </div>
+                          {selectedFriend?.id === f.id && <Check className="w-4 h-4 text-amber-400" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Gift Amount Input & Quick Presets */}
+            <div className="space-y-3">
+              <label className="text-xs text-amber-200 font-extrabold uppercase tracking-wider block">
+                2. Enter Gift Amount (Krests):
+              </label>
+
+              <div className="grid grid-cols-4 gap-2">
+                {[50, 100, 250, 500].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      SFX.playClick();
+                      setGiftAmount(preset);
+                    }}
+                    className={`py-2 rounded-xl font-mono text-xs font-extrabold border cursor-pointer transition-all ${
+                      giftAmount === preset
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md scale-105'
+                        : 'bg-black/40 text-amber-300 border-amber-500/30 hover:bg-black/60'
                     }`}
                   >
-                    <div className="text-xs">{f.username}</div>
-                    <div className="text-[10px] text-amber-300/80 font-mono">{formatFriendCode(f.friendCode)}</div>
+                    +{preset}
                   </button>
                 ))}
               </div>
 
-              <label className="text-xs text-amber-200 font-bold block pt-2">Amount to Transfer:</label>
               <input
                 type="number"
                 min={10}
-                step={50}
+                step={10}
                 value={giftAmount}
                 onChange={(e) => setGiftAmount(Number(e.target.value))}
-                className="w-full px-4 py-2.5 rounded-2xl bg-black/60 border border-amber-500/40 text-amber-300 font-mono font-bold text-sm focus:outline-none"
+                className="w-full px-4 py-3 rounded-2xl bg-black/60 border border-amber-500/40 text-amber-300 font-mono font-bold text-base focus:outline-none focus:border-amber-400"
+                placeholder="Enter custom Krests amount..."
               />
 
               <button
                 onClick={handleSendKrestsToFriend}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer"
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer transition-transform active:scale-95 flex items-center justify-center gap-2"
               >
-                Send Krests Gift
+                <Gift className="w-4 h-4" />
+                <span>
+                  {selectedFriend
+                    ? `Send +${giftAmount} Krests to ${selectedFriend.username}`
+                    : 'Send Krests Gift'}
+                </span>
               </button>
 
               {giftStatus && (
@@ -997,28 +1238,9 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
                   <div className="max-w-md space-y-1">
                     <h4 className="text-sm font-bold text-white">Camera Access Notice</h4>
                     <p className="text-xs text-slate-400">{cameraError}</p>
-                  </div>
-
-                  {/* Demo Scan Trigger buttons */}
-                  <div className="space-y-2 pt-2 w-full max-w-sm">
-                    <div className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider">
-                      Quick Demo Scan Test:
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {allUsers.slice(0, 4).map((demoUser) => (
-                        <button
-                          key={demoUser.id}
-                          onClick={() => {
-                            const code = getDeterministicFriendCode(demoUser.id);
-                            handleProcessCode(code);
-                          }}
-                          className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/30 text-emerald-200 text-xs font-mono font-bold flex items-center justify-between cursor-pointer transition-all"
-                        >
-                          <span className="truncate">{demoUser.username}</span>
-                          <Sparkles className="w-3 h-3 text-amber-300 shrink-0" />
-                        </button>
-                      ))}
-                    </div>
+                    <p className="text-[11px] text-slate-500 pt-2">
+                      Please allow camera access in your browser or click "Upload Image" above to upload a photo of your friend's QR Code.
+                    </p>
                   </div>
                 </div>
               )}
@@ -1045,32 +1267,6 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Quick Demo Friend Test Trigger Bar */}
-            <div className="p-3 rounded-2xl bg-black/50 border border-emerald-500/20 space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-300">
-                <span className="flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Test Scanner with Active Users:</span>
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">Tap any user to test target lock</span>
-              </div>
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                {allUsers.map((u) => {
-                  const code = getDeterministicFriendCode(u.id);
-                  return (
-                    <button
-                      key={u.id}
-                      onClick={() => handleProcessCode(code)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-bold shrink-0 flex items-center gap-2 cursor-pointer transition-colors"
-                    >
-                      <span>{u.username}</span>
-                      <span className="font-mono text-[10px] text-amber-300">{formatFriendCode(code)}</span>
-                    </button>
-                  );
-                })}
-              </div>
             </div>
 
             {/* Scanned Result Modal / Card */}
@@ -1226,6 +1422,79 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
                   {callingState.isCamOff ? <CameraOff className="w-5 h-5" /> : <Camera className="w-5 h-5" />}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invite to Call Room Share Link Modal */}
+      {inviteModal?.open && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md p-6 rounded-3xl bg-slate-950 border-2 border-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.3)] space-y-5 text-white animate-scaleUp">
+            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
+              <div className="flex items-center gap-2 text-emerald-300 font-black text-sm uppercase tracking-wider">
+                <Share2 className="w-5 h-5 text-emerald-400" />
+                <span>Call Room Link Generated</span>
+              </div>
+              <button
+                onClick={() => setInviteModal(null)}
+                className="text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-400/30 space-y-2">
+              <p className="text-xs text-emerald-200">
+                Share this private room link with your friend to jump on a call immediately:
+              </p>
+              <div className="p-3 rounded-xl bg-black/70 border border-emerald-500/40 text-amber-300 font-mono text-xs break-all select-all flex items-center gap-2">
+                <LinkIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="truncate">{inviteModal.url}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  SFX.playClick();
+                  navigator.clipboard.writeText(inviteModal.url);
+                  setInviteModal({ ...inviteModal, copied: true });
+                  triggerNotification('🔗 Copied to Clipboard!', 'Share this link with your friend!');
+                }}
+                className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 transition-transform active:scale-95"
+              >
+                {inviteModal.copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{inviteModal.copied ? 'Copied Link!' : 'Copy Room Link'}</span>
+              </button>
+
+              <button
+                onClick={() => setInviteModal(null)}
+                className="px-5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Celebratory Gift Animation Overlay */}
+      {showGiftAnimation && (
+        <div className="fixed inset-0 z-[150] pointer-events-none flex items-center justify-center">
+          <div className="p-8 rounded-3xl bg-slate-950/90 border-4 border-amber-400 shadow-[0_0_100px_rgba(251,191,36,0.6)] backdrop-blur-2xl text-center space-y-4 animate-bounce-short">
+            <div className="flex justify-center gap-3 text-amber-400 animate-pulse">
+              <Coins className="w-12 h-12 animate-spin" />
+              <Gift className="w-12 h-12" />
+              <Sparkles className="w-12 h-12 animate-spin" />
+            </div>
+            <div>
+              <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400">
+                GIFT SENT SUCCESSFULLY!
+              </h2>
+              <p className="text-sm font-bold text-amber-200 mt-1 font-mono">
+                +{giftAmount} Krests sent to {selectedFriend?.username}!
+              </p>
             </div>
           </div>
         </div>

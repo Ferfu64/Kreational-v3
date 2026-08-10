@@ -49,6 +49,10 @@ import { AssistantControlsModal } from './assistant/AssistantControlsModal';
 import { ChalkboardModal } from './assistant/ChalkboardModal';
 import { ArcadeContextManager } from './assistant/ArcadeContextManager';
 import { ApprovalNotifications } from './components/ApprovalNotifications';
+import { GlobalAnnouncementBanner } from './components/GlobalAnnouncementBanner';
+import { AZGamesChallengesModal } from './components/AZGamesChallengesModal';
+import { KreatorFunPanel } from './components/KreatorFunPanel';
+import { KrozeZone } from './components/KrozeZone';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { NotificationDrawer } from './components/NotificationDrawer';
 import {
@@ -175,6 +179,19 @@ export default function App() {
   const [isInventoryOpen, setIsInventoryOpen] = useState(false);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+
+  // Kroze Zone & Kreator Fun States
+  const [isKreatorFunOpen, setIsKreatorFunOpen] = useState(false);
+  const [isAZChallengesOpen, setIsAZChallengesOpen] = useState(false);
+  const [isKrozePage, setIsKrozePage] = useState(() => window.location.pathname === '/kroze');
+
+  useEffect(() => {
+    const handleLocationCheck = () => {
+      setIsKrozePage(window.location.pathname === '/kroze');
+    };
+    window.addEventListener('popstate', handleLocationCheck);
+    return () => window.removeEventListener('popstate', handleLocationCheck);
+  }, []);
 
   // Real-time user document sync from Firestore server
   useEffect(() => {
@@ -680,30 +697,50 @@ export default function App() {
       onCloseCurrentGame={handleCloseCurrentGame}
       onShowTier={handleShowTier}
     >
-      <div id="app-root" className={`min-h-screen ${user && !playingGame ? 'bg-transparent' : 'bg-[#050505]'} text-slate-100 flex flex-col font-sans relative overflow-x-hidden selection:bg-purple-500/30 selection:text-purple-200`}>
-        {/* Background ambient lighting */}
-        <div className="fixed -top-32 -left-32 w-96 h-96 bg-purple-600/15 rounded-full blur-[120px] pointer-events-none" />
-        <div className="fixed top-1/3 -right-32 w-96 h-96 bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none" />
-        <div className="fixed -bottom-32 left-1/3 w-96 h-96 bg-purple-900/15 rounded-full blur-[120px] pointer-events-none" />
+      {isKrozePage ? (
+        <KrozeZone
+          user={user}
+          onUpdateUser={handleUpdateUser}
+          onReturnToKreational={() => {
+            window.history.pushState({}, '', '/');
+            setIsKrozePage(false);
+          }}
+          onOpenAZChallenges={() => setIsAZChallengesOpen(true)}
+        />
+      ) : (
+        <div id="app-root" className={`min-h-screen ${user && !playingGame ? 'bg-transparent' : 'bg-[#050505]'} text-slate-100 flex flex-col font-sans relative overflow-x-hidden selection:bg-purple-500/30 selection:text-purple-200`}>
+          {/* Global Announcement Banner */}
+          <GlobalAnnouncementBanner />
 
-        {/* Navbar */}
-        {activeTab !== 'marketplace' && (
-          <Navbar
-            user={user}
-            activeTab={activeTab}
-            setActiveTab={handleSetActiveTab}
-            onOpenRequestsHistory={() => setIsRequestHistoryOpen(true)}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenProfile={() => setIsProfileOpen(true)}
-            onOpenShop={() => setIsShopOpen(true)}
-            onOpenInventory={() => setIsInventoryOpen(true)}
-            onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
-            onLogout={handleLogout}
-            pendingRequestsCount={pendingRequestsCount}
-            unreadNotificationsCount={unreadNotificationsCount}
-            isOnline={isOnline}
-          />
-        )}
+          {/* Background ambient lighting */}
+          <div className="fixed -top-32 -left-32 w-96 h-96 bg-purple-600/15 rounded-full blur-[120px] pointer-events-none" />
+          <div className="fixed top-1/3 -right-32 w-96 h-96 bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none" />
+          <div className="fixed -bottom-32 left-1/3 w-96 h-96 bg-purple-900/15 rounded-full blur-[120px] pointer-events-none" />
+
+          {/* Navbar */}
+          {activeTab !== 'marketplace' && (
+            <Navbar
+              user={user}
+              activeTab={activeTab}
+              setActiveTab={handleSetActiveTab}
+              onOpenRequestsHistory={() => setIsRequestHistoryOpen(true)}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenProfile={() => setIsProfileOpen(true)}
+              onOpenShop={() => setIsShopOpen(true)}
+              onOpenInventory={() => setIsInventoryOpen(true)}
+              onOpenNotifications={() => setIsNotificationDrawerOpen(true)}
+              onOpenKreatorFun={() => setIsKreatorFunOpen(true)}
+              onOpenAZChallenges={() => setIsAZChallengesOpen(true)}
+              onOpenKrozeZone={() => {
+                window.history.pushState({}, '', '/kroze');
+                setIsKrozePage(true);
+              }}
+              onLogout={handleLogout}
+              pendingRequestsCount={pendingRequestsCount}
+              unreadNotificationsCount={unreadNotificationsCount}
+              isOnline={isOnline}
+            />
+          )}
 
         {/* Main Content View */}
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -716,6 +753,7 @@ export default function App() {
                 onSelectTier={(tid) => setSelectedTierId(tid)}
                 userPurchasedTiers={user.purchasedTiers || []}
                 isAdmin={user.role === 'admin' || user.username === 'Kreator'}
+                onOpenAZChallenges={() => setIsAZChallengesOpen(true)}
                 onRequestTierAccess={(tier) => {
                   setRequestModal({
                     isOpen: true,
@@ -907,7 +945,24 @@ export default function App() {
             refreshUserProfile();
           }}
         />
+
+        {/* 25 AZGAMES Challenges Modal */}
+        <AZGamesChallengesModal
+          isOpen={isAZChallengesOpen}
+          onClose={() => setIsAZChallengesOpen(false)}
+          user={user}
+          onUpdateUser={handleUpdateUser}
+        />
+
+        {/* Kreator Fun Admin Panel */}
+        <KreatorFunPanel
+          isOpen={isKreatorFunOpen}
+          onClose={() => setIsKreatorFunOpen(false)}
+          user={user}
+          onUpdateUser={handleUpdateUser}
+        />
       </div>
+      )}
     </AssistantProvider>
   );
 }

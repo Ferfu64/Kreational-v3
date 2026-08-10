@@ -74,8 +74,28 @@ const BOT_NAMES = [
 let botsMemoryCache: User[] = [];
 let isBotsInitialized = false;
 
+export function getItemEstimatedValue(item: ItemInstance): number {
+  const rarityValuations: Record<string, number> = {
+    common: 25,
+    uncommon: 70,
+    rare: 180,
+    epic: 500,
+    legendary: 1400,
+  };
+  const base = rarityValuations[item.rarity] || 100;
+  // Small variance hash based on instanceId or name length
+  let hash = 0;
+  const str = item.instanceId || item.name || 'item';
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+  }
+  const variance = 0.9 + (Math.abs(hash) % 20) / 100; // 0.9x to 1.1x
+  const calculated = Math.floor(base * variance);
+  return Math.min(calculated, 2000);
+}
+
 function generateBotItem(botId: string, idx: number): ItemInstance {
-  const keys = ['krate_reroll', 'streak_shield', 'request_token', 'krest_booster'];
+  const keys = Object.keys(UTILITY_ITEMS_CATALOG);
   const chosenKey = keys[(idx + Math.floor(Math.random() * keys.length)) % keys.length];
   return createItemInstance(chosenKey, botId);
 }
@@ -264,15 +284,8 @@ export async function runBotMarketplaceSimulation(
         const nextBid = calculateNextBotBid(targetListing.currentBid);
         const availableKrests = (bidderBot.krests || 0) - (bidderBot.reservedKrests || 0);
 
-        // Valuation check based on rarity
-        const rarityValuation: Record<string, number> = {
-          common: 500,
-          uncommon: 900,
-          rare: 1800,
-          epic: 3500,
-          legendary: 7000,
-        };
-        const maxValuation = rarityValuation[targetListing.itemInstance.rarity] || 1000;
+        // Nerfed valuation check: Bots will NOT bid above the item's estimated value
+        const maxValuation = getItemEstimatedValue(targetListing.itemInstance);
 
         if (nextBid <= maxValuation && availableKrests >= nextBid) {
           const prevHighestBidderId = targetListing.highestBidderId;

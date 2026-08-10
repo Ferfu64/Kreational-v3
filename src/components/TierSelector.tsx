@@ -10,6 +10,7 @@ interface TierSelectorProps {
   userPurchasedTiers: TierId[];
   isAdmin: boolean;
   onRequestTierAccess: (tier: Tier) => void;
+  onOpenAZChallenges?: () => void;
 }
 
 export const TIER_THEMES: Record<
@@ -114,6 +115,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
   userPurchasedTiers,
   isAdmin,
   onRequestTierAccess,
+  onOpenAZChallenges,
 }) => {
   // Hidden by default: 'azgames' tier only shown if user is Admin OR has explicit access
   const visibleTiers = tiers.filter((tier) => {
@@ -187,7 +189,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
               </div>
 
               {/* Status Badge */}
-              <div className="w-full mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
+              <div className="w-full mt-2 pt-2 border-t border-white/10 flex flex-col items-center gap-1.5 text-[11px]">
                 {isUnlocked ? (
                   <span className="text-emerald-400 font-semibold text-[11px] flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -204,6 +206,21 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
                   >
                     <Key className="w-3 h-3" />
                     <span>Request Tier</span>
+                  </button>
+                )}
+
+                {/* 25 AZGAMES Passes Button right under AZGAMES tier card */}
+                {isAZGames && onOpenAZChallenges && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      SFX.playClick();
+                      onOpenAZChallenges();
+                    }}
+                    className="w-full py-1 px-1.5 rounded-lg bg-gradient-to-r from-amber-500/30 via-red-500/30 to-amber-500/30 hover:from-amber-500/50 hover:to-red-500/50 text-amber-200 border border-amber-400/50 font-black text-[9px] uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-300 animate-pulse" />
+                    <span>25 AZ Passes</span>
                   </button>
                 )}
               </div>

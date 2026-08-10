@@ -14,6 +14,9 @@ interface NavbarProps {
   onOpenShop: () => void;
   onOpenInventory?: () => void;
   onOpenNotifications?: () => void;
+  onOpenKreatorFun?: () => void;
+  onOpenAZChallenges?: () => void;
+  onOpenKrozeZone?: () => void;
   onLogout: () => void;
   pendingRequestsCount?: number;
   unreadNotificationsCount?: number;
@@ -30,6 +33,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenShop,
   onOpenInventory,
   onOpenNotifications,
+  onOpenKreatorFun,
+  onOpenAZChallenges,
+  onOpenKrozeZone,
   onLogout,
   pendingRequestsCount = 0,
   unreadNotificationsCount = 0,
@@ -154,7 +160,38 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </button>
 
-              {/* My Request History Button */}
+              {/* Kroze Zone Button */}
+              <button
+                id="nav-kroze-button"
+                onClick={() => {
+                  SFX.playClick();
+                  if (onOpenKrozeZone) {
+                    onOpenKrozeZone();
+                  } else {
+                    window.history.pushState({}, '', '/kroze');
+                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  }
+                }}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-black text-rose-200 bg-gradient-to-r from-rose-500/20 to-purple-600/20 hover:from-rose-500/30 hover:to-purple-600/30 border border-rose-500/40 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-md shadow-rose-950/30"
+              >
+                <span className="text-sm">🌸</span>
+                <span>Kroze Zone</span>
+              </button>
+
+              {/* Kreator Fun Panel (Admin/Kreator only) */}
+              {isAdmin && (
+                <button
+                  id="nav-kreator-fun-button"
+                  onClick={() => {
+                    SFX.playClick();
+                    onOpenKreatorFun?.();
+                  }}
+                  className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-black text-purple-200 bg-purple-600/30 hover:bg-purple-600/50 border border-purple-400/50 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-md shadow-purple-950/40"
+                >
+                  <Shield className="w-3.5 h-3.5 text-purple-300 animate-pulse" />
+                  <span>Kreator Fun Panel</span>
+                </button>
+              )}
               <button
                 id="nav-my-requests-button"
                 onClick={() => {

@@ -45,7 +45,7 @@ import {
   cancelListingInStore,
   fetchMarketplaceHistory,
 } from '../services/marketplaceStore';
-import { runBotMarketplaceSimulation } from '../services/marketplaceBots';
+import { runBotMarketplaceSimulation, getItemEstimatedValue } from '../services/marketplaceBots';
 
 interface MarketplacePageProps {
   user: User;
@@ -146,21 +146,32 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
       setHistory(updatedHistory);
     });
 
-    const botInterval = setInterval(async () => {
-      try {
-        await runBotMarketplaceSimulation(
-          listingsRef.current,
-          createListingInStore,
-          placeBidInStore,
-          cashOutListingInStore
-        );
-      } catch (e) {}
-    }, 6000);
+    let isMounted = true;
+    let timerId: NodeJS.Timeout;
+
+    const runRandomBotTick = () => {
+      const delay = Math.floor(Math.random() * 99000) + 1000; // 1 to 100 seconds
+      timerId = setTimeout(async () => {
+        if (!isMounted) return;
+        try {
+          await runBotMarketplaceSimulation(
+            listingsRef.current,
+            createListingInStore,
+            placeBidInStore,
+            cashOutListingInStore
+          );
+        } catch (e) {}
+        if (isMounted) runRandomBotTick();
+      }, delay);
+    };
+
+    runRandomBotTick();
 
     return () => {
+      isMounted = false;
       unsubscribeListings();
       unsubscribeHistory();
-      clearInterval(botInterval);
+      clearTimeout(timerId);
     };
   }, []);
 
@@ -278,6 +289,10 @@ export const MarketplacePage: React.FC<MarketplacePageProps> = ({
             <span className="font-mono font-extrabold text-amber-300 text-sm">
               {listing.currentBid || listing.startingBid} Krests
             </span>
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-cyan-300/90 font-mono">
+            <span>Est. Valuation:</span>
+            <span className="font-bold">~{getItemEstimatedValue(listing.itemInstance)} Krests</span>
           </div>
           {listing.isLimited && (
             <div className="flex items-center justify-between text-[10px] text-slate-400">

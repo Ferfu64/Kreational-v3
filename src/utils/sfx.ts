@@ -45,6 +45,11 @@ class SoundManager {
     } catch (e) {}
   }
 
+  // Pop Chat Bubble Sound
+  public playPop() {
+    this.playClick();
+  }
+
   // Tier Switch Sound
   public playTierChange() {
     const ctx = this.getContext();

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import { AvatarCropModal } from './AvatarCropModal';
+import { generateQRCodeSVG, getDeterministicFriendCode, formatFriendCode } from '../utils/qrCodeGenerator';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
 interface ProfileModalProps {
@@ -251,6 +252,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   <span>{iconShards} / 10 Shards</span>
                 </div>
               </div>
+            </div>
+
+            {/* Kroze Friend QR Code & 10-Digit ID Panel */}
+            <div className="p-3 rounded-2xl bg-black/60 border border-rose-500/30 flex flex-col items-center text-center space-y-1 shadow-inner shrink-0 self-center sm:self-start">
+              <div
+                className="w-24 h-24"
+                dangerouslySetInnerHTML={{
+                  __html: generateQRCodeSVG(getDeterministicFriendCode(user.id), 120),
+                }}
+              />
+              <span className="font-mono text-xs text-amber-300 font-extrabold tracking-wider">
+                {formatFriendCode(getDeterministicFriendCode(user.id))}
+              </span>
+              <span className="text-[9px] text-purple-200/70 font-semibold">Kroze Friend Code</span>
             </div>
           </div>
         </div>

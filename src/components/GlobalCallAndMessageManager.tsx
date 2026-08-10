@@ -17,6 +17,8 @@ import {
   Gift,
   Coins,
   Share2,
+  Volume2,
+  Activity,
 } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import { triggerNotification, requestNotificationPermission } from '../utils/notificationManager';
@@ -29,7 +31,15 @@ import {
   joinPrivateCallRoom,
 } from '../services/callService';
 import { db } from '../lib/firebase';
-import { doc, onSnapshot, collection, query, where } from 'firebase/firestore';
+import {
+  doc,
+  onSnapshot,
+  collection,
+  query,
+  where,
+  addDoc,
+  updateDoc,
+} from 'firebase/firestore';
 
 interface GlobalCallAndMessageManagerProps {
   currentUser: User | null;
@@ -43,6 +53,8 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   const [isMuted, setIsMuted] = useState(false);
   const [isCamOff, setIsCamOff] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
 
   // Incoming Gift Modal State
   const [receivedGiftInfo, setReceivedGiftInfo] = useState<{
@@ -50,9 +62,16 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     amount: number;
   } | null>(null);
 
-  // Local media stream refs
+  // Local & Remote Media Stream Refs
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -246,6 +265,13 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   // -------------------------------------------------------------
   // 3. CALL DURATION TIMER (Runs only when BOTH parties in room)
   // -------------------------------------------------------------
+  const isParticipant =
+    activeCall &&
+    (activeCall.callerId === currentUser?.id ||
+      activeCall.recipientId === currentUser?.id);
+
+  const isCaller = activeCall?.callerId === currentUser?.id;
+
   const bothInRoom =
     activeCall?.status === 'accepted' &&
     activeCall?.callerInRoom &&
@@ -265,44 +291,16 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   }, [bothInRoom]);
 
   // -------------------------------------------------------------
-  // 4. MEDIA STREAM & MIC / CAMERA CONTROL
+  // 4. WebRTC PEER CONNECTION & MEDIA STREAM LIFECYCLE
   // -------------------------------------------------------------
-  const isParticipant =
-    activeCall &&
-    (activeCall.callerId === currentUser?.id ||
-      activeCall.recipientId === currentUser?.id);
-
-  const isCaller = activeCall?.callerId === currentUser?.id;
-
-  const startMediaStream = async (needVideo: boolean) => {
+  const setupAudioVisualizer = (stream: MediaStream) => {
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-
-      const constraints: MediaStreamConstraints = {
-        audio: true,
-        video: needVideo
-          ? {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              facingMode: 'user',
-            }
-          : false,
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      if (localVideoRef.current && needVideo) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play().catch(() => {});
-      }
-
-      // Voice Visualizer Waveform Setup
       if (window.AudioContext || (window as any).webkitAudioContext) {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
         audioContextRef.current = ctx;
         const source = ctx.createMediaStreamSource(stream);
         const analyser = ctx.createAnalyser();
@@ -312,8 +310,8 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
         drawVoiceWaveform();
       }
-    } catch (err) {
-      console.warn('MediaStream permission or device warning:', err);
+    } catch (e) {
+      console.warn('AudioContext visualizer setup error:', e);
     }
   };
 
@@ -347,7 +345,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     render();
   };
 
-  const stopMediaStream = () => {
+  const cleanupWebRTC = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
@@ -356,28 +354,301 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((t) => t.stop());
+      remoteStreamRef.current = null;
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+    iceCandidatesQueueRef.current = [];
+    setHasRemoteVideo(false);
+  };
+
+  // Helper to add or queue ICE candidate
+  const addOrQueueCandidate = async (pc: RTCPeerConnection, candidateData: RTCIceCandidateInit) => {
+    if (pc.remoteDescription && pc.remoteDescription.type) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidateData));
+      } catch (err) {
+        console.warn('Error adding ICE candidate:', err);
+      }
+    } else {
+      iceCandidatesQueueRef.current.push(candidateData);
+    }
+  };
+
+  // Helper to flush queued candidates once remote description is set
+  const flushIceCandidates = async (pc: RTCPeerConnection) => {
+    if (pc.remoteDescription && pc.remoteDescription.type && iceCandidatesQueueRef.current.length > 0) {
+      const candidates = [...iceCandidatesQueueRef.current];
+      iceCandidatesQueueRef.current = [];
+      for (const cand of candidates) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn('Error flushing queued candidate:', err);
+        }
+      }
     }
   };
 
   useEffect(() => {
-    if (bothInRoom && activeCall) {
-      startMediaStream(activeCall.isVideo);
-    } else {
-      stopMediaStream();
+    if (!bothInRoom || !activeCall || !currentUser) {
+      cleanupWebRTC();
+      return;
     }
 
-    return () => {
-      stopMediaStream();
+    let isMounted = true;
+    let unsubCallDoc: (() => void) | null = null;
+    let unsubCandidates: (() => void) | null = null;
+
+    const setupWebRTC = async () => {
+      try {
+        setHasRemoteVideo(false);
+        setConnectionStatus('connecting');
+
+        // 1. Get Local Stream (Audio + Video)
+        const constraints: MediaStreamConstraints = {
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: activeCall.isVideo
+            ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+            : false,
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (!isMounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        localStreamRef.current = stream;
+
+        // Attach local stream to localVideoRef
+        if (localVideoRef.current && activeCall.isVideo) {
+          localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch(() => {});
+        }
+
+        setupAudioVisualizer(stream);
+
+        // 2. Create WebRTC PeerConnection with STUN servers
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+          ],
+        });
+        peerConnectionRef.current = pc;
+
+        // Add local tracks
+        stream.getTracks().forEach((track) => {
+          pc.addTrack(track, stream);
+        });
+
+        // Track Connection State Changes
+        pc.onconnectionstatechange = () => {
+          if (!isMounted) return;
+          console.log('WebRTC connectionState:', pc.connectionState);
+          if (pc.connectionState === 'connected') {
+            setConnectionStatus('connected');
+          } else if (pc.connectionState === 'connecting' || pc.connectionState === 'new') {
+            setConnectionStatus('connecting');
+          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            setConnectionStatus('reconnecting');
+          }
+        };
+
+        // 3. Handle Remote Track
+        pc.ontrack = (event) => {
+          if (!isMounted) return;
+          console.log('Received remote track:', event.track.kind);
+
+          if (!remoteStreamRef.current) {
+            remoteStreamRef.current = new MediaStream();
+          }
+          const remoteStream = remoteStreamRef.current;
+
+          if (event.streams && event.streams[0]) {
+            event.streams[0].getTracks().forEach((track) => {
+              if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+                remoteStream.addTrack(track);
+              }
+            });
+          } else if (event.track) {
+            if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+              remoteStream.addTrack(event.track);
+            }
+          }
+
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play().catch((e) => console.warn('Remote video play:', e));
+          }
+
+          if (remoteAudioRef.current) {
+            remoteAudioRef.current.srcObject = remoteStream;
+            remoteAudioRef.current.play().catch((e) => console.warn('Remote audio play:', e));
+          }
+
+          const hasVideoTracks = remoteStream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
+          setHasRemoteVideo(hasVideoTracks || event.track.kind === 'video');
+        };
+
+        // 4. Handle Local ICE Candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate && isMounted) {
+            const candidateCol = isCaller ? 'callerCandidates' : 'recipientCandidates';
+            addDoc(
+              collection(db, 'kroze_active_calls', activeCall.id, candidateCol),
+              event.candidate.toJSON()
+            ).catch((err) => console.warn('Candidate add error:', err));
+          }
+        };
+
+        // 5. Signalling Flow
+        if (isCaller) {
+          // CALLER CREATES OFFER
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          await updateDoc(doc(db, 'kroze_active_calls', activeCall.id), {
+            offer: { sdp: offer.sdp, type: offer.type },
+            updatedAt: Date.now(),
+          });
+
+          // Caller listens for Answer
+          unsubCallDoc = onSnapshot(
+            doc(db, 'kroze_active_calls', activeCall.id),
+            async (snapshot) => {
+              const data = snapshot.data();
+              if (data?.answer && pc.signalingState !== 'closed' && !pc.currentRemoteDescription) {
+                try {
+                  const rtcAnswer = new RTCSessionDescription(data.answer);
+                  await pc.setRemoteDescription(rtcAnswer);
+                  await flushIceCandidates(pc);
+                } catch (e) {
+                  console.warn('Set remote desc error:', e);
+                }
+              }
+            }
+          );
+
+          // Caller listens for Recipient's ICE Candidates
+          unsubCandidates = onSnapshot(
+            collection(db, 'kroze_active_calls', activeCall.id, 'recipientCandidates'),
+            (snapshot) => {
+              snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added') {
+                  addOrQueueCandidate(pc, change.doc.data() as RTCIceCandidateInit);
+                }
+              });
+            }
+          );
+        } else {
+          // RECIPIENT LISTENS FOR OFFER -> CREATES ANSWER
+          unsubCallDoc = onSnapshot(
+            doc(db, 'kroze_active_calls', activeCall.id),
+            async (snapshot) => {
+              const data = snapshot.data();
+              if (
+                data?.offer &&
+                pc.signalingState !== 'closed' &&
+                !pc.currentRemoteDescription
+              ) {
+                try {
+                  const rtcOffer = new RTCSessionDescription(data.offer);
+                  await pc.setRemoteDescription(rtcOffer);
+                  await flushIceCandidates(pc);
+
+                  const answer = await pc.createAnswer();
+                  await pc.setLocalDescription(answer);
+
+                  await updateDoc(doc(db, 'kroze_active_calls', activeCall.id), {
+                    answer: { sdp: answer.sdp, type: answer.type },
+                    updatedAt: Date.now(),
+                  });
+                } catch (err) {
+                  console.warn('Recipient offer handling error:', err);
+                }
+              }
+            }
+          );
+
+          // Recipient listens for Caller's ICE Candidates
+          unsubCandidates = onSnapshot(
+            collection(db, 'kroze_active_calls', activeCall.id, 'callerCandidates'),
+            (snapshot) => {
+              snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added') {
+                  addOrQueueCandidate(pc, change.doc.data() as RTCIceCandidateInit);
+                }
+              });
+            }
+          );
+        }
+      } catch (err) {
+        console.warn('WebRTC setup error:', err);
+      }
     };
-  }, [bothInRoom, activeCall?.isVideo]);
+
+    setupWebRTC();
+
+    return () => {
+      isMounted = false;
+      if (unsubCallDoc) unsubCallDoc();
+      if (unsubCandidates) unsubCandidates();
+      cleanupWebRTC();
+    };
+  }, [bothInRoom, activeCall?.id, isCaller, activeCall?.isVideo]);
+
+  // Bind local/remote streams to media elements whenever UI updates (e.g. fullscreen toggle, video toggle)
+  useEffect(() => {
+    if (bothInRoom) {
+      if (localVideoRef.current && localStreamRef.current) {
+        if (localVideoRef.current.srcObject !== localStreamRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+          localVideoRef.current.play().catch(() => {});
+        }
+      }
+      if (remoteVideoRef.current && remoteStreamRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+          remoteVideoRef.current.srcObject = remoteStreamRef.current;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      }
+      if (remoteAudioRef.current && remoteStreamRef.current) {
+        if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
+          remoteAudioRef.current.srcObject = remoteStreamRef.current;
+          remoteAudioRef.current.play().catch(() => {});
+        }
+      }
+    }
+  }, [bothInRoom, isFullscreen, hasRemoteVideo, isCamOff, isMuted]);
 
   // Toggle Mute
   const handleToggleMute = () => {
-    if (streamRef.current) {
-      streamRef.current.getAudioTracks().forEach((track) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = isMuted; // Toggle
       });
     }
@@ -387,8 +658,8 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
   // Toggle Camera
   const handleToggleCam = () => {
-    if (streamRef.current) {
-      streamRef.current.getVideoTracks().forEach((track) => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
         track.enabled = isCamOff; // Toggle
       });
     }
@@ -415,7 +686,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   const handleHangupCall = async () => {
     if (!activeCall || !currentUser) return;
     SFX.playHangup();
-    stopMediaStream();
+    cleanupWebRTC();
     await endCall(activeCall.id, currentUser.id, isCaller);
     setActiveCall(null);
   };
@@ -585,6 +856,9 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
           : 'fixed bottom-6 right-6 z-[120] w-[90%] max-w-sm p-4 rounded-3xl bg-slate-950/95 border-2 border-emerald-500/50 shadow-[0_0_40px_rgba(16,185,129,0.2)] backdrop-blur-xl text-white space-y-3 transition-all duration-300'
       }
     >
+      {/* Hidden Audio element for remote voice playback */}
+      <audio ref={remoteAudioRef} autoPlay playsInline />
+
       {/* Top Bar Header */}
       <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2.5">
         <div className="flex items-center gap-2">
@@ -595,6 +869,12 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Status Badge */}
+          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-mono text-emerald-300 flex items-center gap-1">
+            <Activity className="w-3 h-3 text-emerald-400" />
+            <span>{connectionStatus === 'connected' ? 'HD CONNECTED' : 'CONNECTING'}</span>
+          </span>
+
           {/* Fullscreen / Unfullscreen toggle button */}
           <button
             onClick={() => {
@@ -621,39 +901,64 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             : 'relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-emerald-500/30 flex items-center justify-center shadow-inner'
         }
       >
-        {activeCall.isVideo && !isCamOff ? (
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover scale-x-[-1]"
-          />
-        ) : (
+        {/* Remote Video Feed (Main Display) */}
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={`w-full h-full object-cover ${activeCall.isVideo && hasRemoteVideo ? 'block' : 'hidden'}`}
+        />
+
+        {/* Remote Avatar Placeholder if Video is Off or Loading */}
+        {(!activeCall.isVideo || !hasRemoteVideo) && (
           <div className="flex flex-col items-center justify-center space-y-3 text-center p-6">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-rose-500 via-purple-600 to-indigo-600 p-1 shadow-2xl">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-rose-500 via-purple-600 to-indigo-600 p-1 shadow-2xl">
               <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center font-black text-2xl sm:text-3xl text-emerald-300">
                 {otherUserName.charAt(0).toUpperCase()}
               </div>
+              <span className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-emerald-400 border-2 border-slate-950 flex items-center justify-center">
+                <Volume2 className="w-3 h-3 text-slate-950 animate-pulse" />
+              </span>
             </div>
             <div>
               <h3 className="text-lg font-black text-white">{otherUserName}</h3>
               <p className="text-xs text-emerald-400 font-mono">
-                {isMuted ? 'Muted' : 'Microphone Connected'}
+                {connectionStatus === 'connected' ? '🎤 Voice Connected' : 'Connecting Audio/Video...'}
               </p>
             </div>
           </div>
         )}
 
-        {/* Remote/Local Visual Overlay Label */}
-        <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/70 border border-white/10 text-[10px] font-mono font-bold text-white backdrop-blur-md flex items-center gap-1.5">
+        {/* Local Video Inset (Picture-in-Picture PIP at Bottom-Right) */}
+        {activeCall.isVideo && (
+          <div className="absolute bottom-3 right-3 w-28 h-20 sm:w-36 sm:h-24 rounded-2xl overflow-hidden border-2 border-emerald-400/80 shadow-2xl bg-slate-950 z-20">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`w-full h-full object-cover scale-x-[-1] ${!isCamOff ? 'block' : 'hidden'}`}
+            />
+            {isCamOff && (
+              <div className="w-full h-full bg-slate-900 flex items-center justify-center text-[10px] text-slate-400 font-bold">
+                Cam Off
+              </div>
+            )}
+            <div className="absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded-md bg-black/75 text-[9px] font-mono font-bold text-emerald-300">
+              You
+            </div>
+          </div>
+        )}
+
+        {/* Remote Overlay Label */}
+        <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/70 border border-white/10 text-[10px] font-mono font-bold text-white backdrop-blur-md flex items-center gap-1.5 z-10">
           <UserIcon className="w-3 h-3 text-emerald-400" />
           <span>{otherUserName}</span>
         </div>
 
         {/* Live Microphone Audio Waveform Bar */}
-        <div className="absolute bottom-3 left-3 right-3 h-6 rounded-xl bg-black/60 border border-emerald-500/30 px-2 flex items-center justify-center">
-          <canvas ref={canvasRef} className="w-full h-full" width={200} height={24} />
+        <div className="absolute bottom-3 left-3 w-32 sm:w-48 h-6 rounded-xl bg-black/60 border border-emerald-500/30 px-2 flex items-center justify-center z-10">
+          <canvas ref={canvasRef} className="w-full h-full" width={180} height={24} />
         </div>
       </div>
 
@@ -713,3 +1018,4 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     </div>
   );
 };
+

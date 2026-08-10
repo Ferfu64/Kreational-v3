@@ -22,6 +22,8 @@ export interface ActiveCallDoc {
   recipientInRoom: boolean;
   createdAt: number;
   updatedAt: number;
+  offer?: { sdp: string; type: RTCSdpType };
+  answer?: { sdp: string; type: RTCSdpType };
 }
 
 const CALLS_COLLECTION = 'kroze_active_calls';

@@ -294,7 +294,7 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     title: user.cosmetics?.title || (user.role === 'admin' ? 'Kreator Mastermind' : 'Arcade Rookie'),
     background: user.cosmetics?.background || 'bg_neon_cyber',
     avatarFrame: user.cosmetics?.avatarFrame || 'frame_default',
-    customAvatarUrl: user.cosmetics?.customAvatarUrl || undefined,
+    ...(user.cosmetics?.customAvatarUrl ? { customAvatarUrl: user.cosmetics.customAvatarUrl } : {}),
     unlockedBackgrounds: Array.from(
       new Set(['bg_neon_cyber', 'bg_cosmic_nebula', ...(user.cosmetics?.unlockedBackgrounds || [])])
     ),

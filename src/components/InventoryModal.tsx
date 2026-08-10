@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import { saveFullUserAccountToFirestore } from '../services/firestoreStore';
+import { safeSet } from '../utils/persistentStorage';
 
 interface InventoryModalProps {
   isOpen: boolean;
@@ -134,7 +135,9 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
     }
 
     try {
-      localStorage.setItem('kreational_user', JSON.stringify(updatedUser));
+      safeSet('kreational_user', JSON.stringify(updatedUser));
+      safeSet('kreational_current_user', JSON.stringify(updatedUser));
+      window.dispatchEvent(new Event('user_updated'));
       await saveFullUserAccountToFirestore(updatedUser);
     } catch (e) {
       console.warn('Error saving user inventory state:', e);

@@ -286,21 +286,22 @@ export function applyDatastoreSnapshot(snapshotStr: string | undefined): boolean
 
 export async function saveFullUserAccountToFirestore(updatedUser: User): Promise<User> {
   const secretWord = updatedUser.secretWord || '';
+  const cleanUser: User = JSON.parse(JSON.stringify(updatedUser));
   const accountRecord: UserAccountRecord = {
-    user: updatedUser,
+    user: cleanUser,
     secretWord,
   };
 
-  addLocalAccount(updatedUser, secretWord);
+  addLocalAccount(cleanUser, secretWord);
 
   try {
-    const docRef = doc(db, USERS_COLLECTION, updatedUser.id);
+    const docRef = doc(db, USERS_COLLECTION, cleanUser.id);
     await setDoc(docRef, accountRecord);
   } catch (err) {
     console.warn('Firestore save full user account failed:', err);
   }
 
-  return updatedUser;
+  return cleanUser;
 }
 
 export async function updateUserAccount(

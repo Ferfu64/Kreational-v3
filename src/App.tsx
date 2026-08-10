@@ -127,6 +127,7 @@ export default function App() {
         }
 
         safeSet('kreational_user', JSON.stringify(updatedUser));
+        safeSet('kreational_current_user', JSON.stringify(updatedUser));
         saveFullUserAccountToFirestore(updatedUser).catch(() => {});
         handleTriggerKreditGain(earnedKrests);
         return updatedUser;
@@ -322,6 +323,7 @@ export default function App() {
   const handleUpdateUser = (updated: User) => {
     setUser(updated);
     safeSet('kreational_user', JSON.stringify(updated));
+    safeSet('kreational_current_user', JSON.stringify(updated));
     saveFullUserAccountToFirestore(updated).catch(() => {});
   };
 
@@ -427,6 +429,7 @@ export default function App() {
     setUser(updatedUser);
     setToken(newToken);
     safeSet('kreational_user', JSON.stringify(updatedUser));
+    safeSet('kreational_current_user', JSON.stringify(updatedUser));
     safeSet('kreational_token', newToken);
     saveFullUserAccountToFirestore(updatedUser).catch(() => {});
   };
@@ -475,6 +478,7 @@ export default function App() {
     setUser(null);
     setToken(null);
     safeRemove('kreational_user');
+    safeRemove('kreational_current_user');
     safeRemove('kreational_token');
     safeRemove('kreations_user');
     safeRemove('kreations_token');

@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { saveFullUserAccountToFirestore } from './firestoreStore';
 import { UTILITY_ITEMS_CATALOG, createItemInstance } from '../data/utilityItems';
 import { triggerNotification } from '../utils/notificationManager';
+import { safeGet } from '../utils/persistentStorage';
 
 export interface BotAccount {
   id: string;
@@ -190,7 +191,7 @@ export async function runBotMarketplaceSimulation(
 
     let currentLoggedInUserId = '';
     try {
-      const stored = localStorage.getItem('kreational_current_user');
+      const stored = safeGet('kreational_user') || safeGet('kreational_current_user');
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.id) currentLoggedInUserId = parsed.id;

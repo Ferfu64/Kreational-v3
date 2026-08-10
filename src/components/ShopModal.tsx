@@ -330,15 +330,34 @@ export const ShopModal: React.FC<ShopModalProps> = ({
     // Consume 1 reroll item from inventory
     let updatedInventory = inv.filter((_, idx) => idx !== rerollItemIdx);
 
-    // Remove previous utility item reward if it was already added from first unboxing roll!
+    // Remove previous utility item reward if present from previous unboxing roll!
     if (reward?.utilityItem) {
-      const prevItemId = reward.utilityItem.id;
-      updatedInventory = updatedInventory.filter((item) => item.id !== prevItemId);
+      const prevInstId = reward.utilityItem.instanceId || reward.utilityItem.id;
+      updatedInventory = updatedInventory.filter((item) => (item.instanceId || item.id) !== prevInstId);
     }
 
     // Re-generate reward without charging Krests
     const krate = openingKrate;
     setUnboxingStep('spinning');
+
+    let currentUnlockedBgs = [...(user.cosmetics?.unlockedBackgrounds || ['bg_neon_cyber'])];
+    let currentUnlockedFrames = [...(user.cosmetics?.unlockedFrames || ['frame_default'])];
+    let currentUnlockedTitles = [...(user.cosmetics?.unlockedTitles || ['Arcade Rookie', 'Glitch Runner'])];
+
+    // Remove previous cosmetic unlock if present and was newly unlocked in previous roll
+    if (reward?.cosmetic && !reward.alreadyOwned) {
+      if (reward.cosmetic.type === 'background') {
+        currentUnlockedBgs = currentUnlockedBgs.filter((id) => id !== reward.cosmetic!.id);
+      } else if (reward.cosmetic.type === 'frame') {
+        currentUnlockedFrames = currentUnlockedFrames.filter((id) => id !== reward.cosmetic!.id);
+      } else if (reward.cosmetic.type === 'title') {
+        currentUnlockedTitles = currentUnlockedTitles.filter((t) => t !== reward.cosmetic!.name);
+      }
+    }
+
+    // Deduct previous shards and bonus Krests gained in first roll
+    const netShards = Math.max(0, (user.iconShards || 0) - (reward?.shardsAdded || 0));
+    const netKrests = Math.max(0, (user.krests || 0) - (reward?.bonusKrests || 0));
 
     let shardsDropped = 0;
     const dropChance = krate.id === 'bronze' ? 0.5 : krate.id === 'silver' ? 0.65 : 0.8;
@@ -352,10 +371,6 @@ export const ShopModal: React.FC<ShopModalProps> = ({
     let chosenUtilityItem: ItemInstance | undefined = undefined;
     let bonusKrests = 0;
     let alreadyOwned = false;
-
-    let currentUnlockedBgs = user.cosmetics?.unlockedBackgrounds || ['bg_neon_cyber'];
-    let currentUnlockedFrames = user.cosmetics?.unlockedFrames || ['frame_default'];
-    let currentUnlockedTitles = user.cosmetics?.unlockedTitles || ['Arcade Rookie', 'Glitch Runner'];
 
     if (krate.category === 'utility') {
       let itemKey = 'cyber_auto_bidder';
@@ -394,14 +409,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
     const updatedUser: User = {
       ...user,
-      krests: (user.krests || 0) + bonusKrests,
-      iconShards: (user.iconShards || 0) + shardsDropped,
+      krests: netKrests + bonusKrests,
+      iconShards: netShards + shardsDropped,
       inventory: updatedInventory,
       cosmetics: {
         ...user.cosmetics,
-        unlockedBackgrounds: currentUnlockedBgs,
-        unlockedFrames: currentUnlockedFrames,
-        unlockedTitles: currentUnlockedTitles,
+        unlockedBackgrounds: Array.from(new Set(currentUnlockedBgs)),
+        unlockedFrames: Array.from(new Set(currentUnlockedFrames)),
+        unlockedTitles: Array.from(new Set(currentUnlockedTitles)),
       },
     };
 

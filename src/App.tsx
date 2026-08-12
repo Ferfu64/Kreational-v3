@@ -53,6 +53,7 @@ import { GlobalAnnouncementBanner } from './components/GlobalAnnouncementBanner'
 import { AZGamesChallengesModal } from './components/AZGamesChallengesModal';
 import { KreatorFunPanel } from './components/KreatorFunPanel';
 import { KrozeZone } from './components/KrozeZone';
+import { CallsHub } from './components/CallsHub';
 import { GlobalCallAndMessageManager } from './components/GlobalCallAndMessageManager';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { NotificationDrawer } from './components/NotificationDrawer';
@@ -184,11 +185,14 @@ export default function App() {
   // Kroze Zone & Kreator Fun States
   const [isKreatorFunOpen, setIsKreatorFunOpen] = useState(false);
   const [isAZChallengesOpen, setIsAZChallengesOpen] = useState(false);
-  const [isKrozePage, setIsKrozePage] = useState(() => window.location.pathname === '/kroze');
+  const [isKrozePage, setIsKrozePage] = useState(() => window.location.pathname.toLowerCase().startsWith('/kroze'));
+  const [isCallsPage, setIsCallsPage] = useState(() => window.location.pathname.toLowerCase().startsWith('/calls'));
 
   useEffect(() => {
     const handleLocationCheck = () => {
-      setIsKrozePage(window.location.pathname === '/kroze');
+      const path = window.location.pathname.toLowerCase();
+      setIsKrozePage(path.startsWith('/kroze'));
+      setIsCallsPage(path.startsWith('/calls'));
     };
     window.addEventListener('popstate', handleLocationCheck);
     return () => window.removeEventListener('popstate', handleLocationCheck);
@@ -698,13 +702,29 @@ export default function App() {
       onCloseCurrentGame={handleCloseCurrentGame}
       onShowTier={handleShowTier}
     >
-      {isKrozePage ? (
+      {isCallsPage ? (
+        <CallsHub
+          user={user}
+          onOpenKrozeZone={() => {
+            window.history.pushState({}, '', '/kroze');
+            setIsKrozePage(true);
+            setIsCallsPage(false);
+          }}
+          onReturnToGames={() => {
+            window.history.pushState({}, '', '/');
+            setIsCallsPage(false);
+            setIsKrozePage(false);
+            setActiveTab('games');
+          }}
+        />
+      ) : isKrozePage ? (
         <KrozeZone
           user={user}
           onUpdateUser={handleUpdateUser}
           onReturnToKreational={() => {
             window.history.pushState({}, '', '/');
             setIsKrozePage(false);
+            setIsCallsPage(false);
           }}
           onOpenAZChallenges={() => setIsAZChallengesOpen(true)}
         />
@@ -924,12 +944,6 @@ export default function App() {
           />
         )}
 
-        {/* Global Real-Time Call and Message Manager Overlay */}
-        <GlobalCallAndMessageManager currentUser={user} />
-
-        {/* Notification Toast Container */}
-        <NotificationToastContainer />
-
         {/* Notification Drawer History View */}
         <NotificationDrawer
           isOpen={isNotificationDrawerOpen}
@@ -967,6 +981,10 @@ export default function App() {
         />
       </div>
       )}
+
+      {/* Global Real-Time Call and Message Manager Overlay & Toast Container */}
+      <GlobalCallAndMessageManager currentUser={user} />
+      <NotificationToastContainer />
     </AssistantProvider>
   );
 }

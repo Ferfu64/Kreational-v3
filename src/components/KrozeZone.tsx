@@ -97,23 +97,6 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Call state
-  const [callingState, setCallingState] = useState<{
-    isActive: boolean;
-    type: 'audio' | 'video';
-    friend: FriendEntry | null;
-    isMuted: boolean;
-    isCamOff: boolean;
-    status: 'calling' | 'connected' | 'ended';
-  }>({
-    isActive: false,
-    type: 'audio',
-    friend: null,
-    isMuted: false,
-    isCamOff: false,
-    status: 'calling',
-  });
-
   // Gift Krests state
   const [giftAmount, setGiftAmount] = useState<number>(100);
   const [giftStatus, setGiftStatus] = useState<{ text: string; success: boolean } | null>(null);
@@ -384,8 +367,8 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     }
   };
 
-  // Start Voice / Video Call via real-time callService
-  const handleStartCall = async (type: 'audio' | 'video') => {
+  // Start Voice Call via real-time callService
+  const handleStartCall = async () => {
     if (!selectedFriend) return;
     SFX.playClick();
 
@@ -394,29 +377,12 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
         user.id,
         user.username,
         selectedFriend.id,
-        selectedFriend.username,
-        type === 'video'
+        selectedFriend.username
       );
       SFX.playSuccess();
     } catch (e) {
       console.warn('Failed to initiate call:', e);
     }
-  };
-
-  // End Call
-  const handleEndCall = () => {
-    SFX.playError();
-    setCallingState((prev) => ({ ...prev, status: 'ended' }));
-    setTimeout(() => {
-      setCallingState({
-        isActive: false,
-        type: 'audio',
-        friend: null,
-        isMuted: false,
-        isCamOff: false,
-        status: 'calling',
-      });
-    }, 800);
   };
 
   // Invite to Call via Shareable Room Link
@@ -852,18 +818,12 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleStartCall('audio')}
-                        className="p-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 cursor-pointer"
-                        title="Voice Call"
+                        onClick={handleStartCall}
+                        className="px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                        title="Voice Call Friend"
                       >
                         <Phone className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleStartCall('video')}
-                        className="p-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-400/40 cursor-pointer"
-                        title="Video Call"
-                      >
-                        <Video className="w-4 h-4" />
+                        <span>Voice Call</span>
                       </button>
                       <button
                         onClick={() => handleUnfriend(selectedFriend.id)}
@@ -1361,71 +1321,6 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
           </div>
         )}
       </main>
-
-      {/* Calling Popup Overlay */}
-      {callingState.isActive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fadeIn">
-          <div className="w-full max-w-md p-6 rounded-3xl bg-slate-900 border border-rose-500/40 shadow-2xl flex flex-col items-center text-center space-y-6">
-            <div className="relative">
-              <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-rose-500 via-purple-500 to-indigo-500 p-1 animate-pulse">
-                <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center text-3xl font-black text-rose-300">
-                  {callingState.friend?.username.charAt(0).toUpperCase()}
-                </div>
-              </div>
-              <div className="absolute -bottom-1 -right-1 p-2 rounded-full bg-rose-500 text-white shadow-lg">
-                {callingState.type === 'video' ? <Video className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-black text-white">{callingState.friend?.username}</h3>
-              <span className="text-xs text-rose-300/80 font-semibold block mt-1">
-                {callingState.status === 'calling' ? 'Ringing in Kroze Zone...' : callingState.status === 'connected' ? 'Connected 00:14' : 'Call Ended'}
-              </span>
-            </div>
-
-            {/* Audio Waveform Visualizer */}
-            {callingState.status === 'connected' && (
-              <div className="flex items-center gap-1 h-8">
-                <span className="w-1.5 bg-rose-400 rounded-full animate-bounce h-4" />
-                <span className="w-1.5 bg-purple-400 rounded-full animate-bounce h-8 delay-100" />
-                <span className="w-1.5 bg-indigo-400 rounded-full animate-bounce h-6 delay-200" />
-                <span className="w-1.5 bg-emerald-400 rounded-full animate-bounce h-7 delay-150" />
-              </div>
-            )}
-
-            {/* Call Action Controls */}
-            <div className="flex items-center gap-4 pt-2">
-              <button
-                onClick={() => setCallingState((p) => ({ ...p, isMuted: !p.isMuted }))}
-                className={`p-3 rounded-full border cursor-pointer ${
-                  callingState.isMuted ? 'bg-rose-600 text-white border-rose-500' : 'bg-white/10 text-white border-white/20'
-                }`}
-              >
-                {callingState.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              </button>
-
-              <button
-                onClick={handleEndCall}
-                className="p-4 rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-lg cursor-pointer transform hover:scale-105 transition-all"
-              >
-                <PhoneOff className="w-6 h-6" />
-              </button>
-
-              {callingState.type === 'video' && (
-                <button
-                  onClick={() => setCallingState((p) => ({ ...p, isCamOff: !p.isCamOff }))}
-                  className={`p-3 rounded-full border cursor-pointer ${
-                    callingState.isCamOff ? 'bg-rose-600 text-white border-rose-500' : 'bg-white/10 text-white border-white/20'
-                  }`}
-                >
-                  {callingState.isCamOff ? <CameraOff className="w-5 h-5" /> : <Camera className="w-5 h-5" />}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Invite to Call Room Share Link Modal */}
       {inviteModal?.open && (

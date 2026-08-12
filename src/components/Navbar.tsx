@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { User } from '../types';
-import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell, Package } from 'lucide-react';
+import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell, Package, Phone } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
@@ -176,6 +176,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <span className="text-sm">🌸</span>
                 <span>Kroze Zone</span>
+              </button>
+
+              {/* Voice Calls Hub Button */}
+              <button
+                id="nav-calls-button"
+                onClick={() => {
+                  SFX.playClick();
+                  window.history.pushState({}, '', '/calls');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-black text-emerald-200 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-md shadow-emerald-950/30"
+              >
+                <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Voice Calls</span>
               </button>
 
               {/* Kreator Fun Panel (Admin/Kreator only) */}

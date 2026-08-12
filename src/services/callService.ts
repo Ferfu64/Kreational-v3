@@ -16,7 +16,7 @@ export interface ActiveCallDoc {
   callerName: string;
   recipientId: string;
   recipientName: string;
-  isVideo: boolean;
+  isVideo?: boolean;
   status: 'ringing' | 'accepted' | 'declined' | 'ended';
   callerInRoom: boolean;
   recipientInRoom: boolean;
@@ -28,13 +28,13 @@ export interface ActiveCallDoc {
 
 const CALLS_COLLECTION = 'kroze_active_calls';
 
-// Initiate a call
+// Initiate a voice call
 export async function initiateCall(
   callerId: string,
   callerName: string,
   recipientId: string,
   recipientName: string,
-  isVideo: boolean
+  _isVideo?: boolean
 ): Promise<string> {
   const callId = `call_${callerId}_${recipientId}_${Date.now()}`;
   const callData: ActiveCallDoc = {
@@ -43,7 +43,7 @@ export async function initiateCall(
     callerName,
     recipientId,
     recipientName,
-    isVideo,
+    isVideo: false,
     status: 'ringing',
     callerInRoom: true,
     recipientInRoom: false,
@@ -100,7 +100,7 @@ export async function declineCall(callId: string): Promise<void> {
 export async function createPrivateCallRoom(
   callerId: string,
   callerName: string,
-  isVideo: boolean = true
+  _isVideo?: boolean
 ): Promise<{ roomId: string; shareUrl: string }> {
   const roomId = `room_${Math.random().toString(36).substring(2, 9)}`;
   const callData: ActiveCallDoc = {
@@ -109,7 +109,7 @@ export async function createPrivateCallRoom(
     callerName,
     recipientId: 'pending_guest',
     recipientName: 'Private Room Guest',
-    isVideo,
+    isVideo: false,
     status: 'ringing',
     callerInRoom: true,
     recipientInRoom: false,
@@ -123,7 +123,8 @@ export async function createPrivateCallRoom(
     console.warn('Failed to save room call to Firestore:', e);
   }
 
-  const shareUrl = `${window.location.origin}${window.location.pathname}?callRoom=${roomId}`;
+  const basePath = window.location.pathname.includes('/calls') ? '/calls' : '/calls';
+  const shareUrl = `${window.location.origin}${basePath}?callRoom=${roomId}`;
   return { roomId, shareUrl };
 }
 

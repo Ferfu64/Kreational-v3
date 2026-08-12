@@ -2,23 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User } from '../types';
 import {
   Phone,
-  Video,
   PhoneOff,
   Mic,
   MicOff,
-  Camera,
-  CameraOff,
   Maximize2,
   Minimize2,
   PhoneIncoming,
-  CheckCircle2,
   Sparkles,
   User as UserIcon,
   Gift,
   Coins,
-  Share2,
   Volume2,
   Activity,
+  Radio,
 } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import { triggerNotification, requestNotificationPermission } from '../utils/notificationManager';
@@ -51,9 +47,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   const [activeCall, setActiveCall] = useState<ActiveCallDoc | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isCamOff, setIsCamOff] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
-  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
 
   // Incoming Gift Modal State
@@ -62,11 +56,8 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     amount: number;
   } | null>(null);
 
-  // Local & Remote Media Stream Refs
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  // Audio Stream Refs
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
-
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -77,7 +68,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Track session start time to prevent duplicate notification triggers on historical items
+  // Track session start time to prevent duplicate notification triggers
   const sessionStartTimeRef = useRef<number>(Date.now());
   const notifiedMsgsRef = useRef<Set<string>>(new Set());
   const notifiedCallsRef = useRef<Set<string>>(new Set());
@@ -88,22 +79,42 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     requestNotificationPermission();
   }, []);
 
+  // Ensure AudioContext and audio elements play on any user gesture
+  const resumeAudioOnGesture = () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(() => {});
+    }
+    if (remoteAudioRef.current && remoteAudioRef.current.paused && remoteStreamRef.current) {
+      remoteAudioRef.current.play().catch(() => {});
+    }
+  };
+
   // -------------------------------------------------------------
   // 0. AUTO-JOIN PRIVATE CALL ROOM IF URL PARAMETER PRESENT
   // -------------------------------------------------------------
   useEffect(() => {
     if (!currentUser) return;
-    const urlParams = new URLSearchParams(window.location.search);
-    const callRoomParam = urlParams.get('callRoom');
 
-    if (callRoomParam) {
-      joinPrivateCallRoom(callRoomParam, currentUser.id, currentUser.username).then((success) => {
-        if (success) {
-          SFX.playSuccess();
-          triggerNotification('📞 Joined Call Room', 'Connected to private call room!');
-        }
-      });
-    }
+    const checkAndJoinRoom = () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      let callRoomParam = urlParams.get('callRoom');
+      if (!callRoomParam && window.location.pathname.startsWith('/calls/')) {
+        callRoomParam = window.location.pathname.split('/calls/')[1];
+      }
+
+      if (callRoomParam) {
+        joinPrivateCallRoom(callRoomParam, currentUser.id, currentUser.username).then((success) => {
+          if (success) {
+            SFX.playSuccess();
+            triggerNotification('📞 Joined Voice Call Room', 'Connected to private voice room!');
+          }
+        });
+      }
+    };
+
+    checkAndJoinRoom();
+    window.addEventListener('popstate', checkAndJoinRoom);
+    return () => window.removeEventListener('popstate', checkAndJoinRoom);
   }, [currentUser?.id]);
 
   // -------------------------------------------------------------
@@ -190,7 +201,6 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     }
 
     const unsub = subscribeToUserCalls(currentUser.id, (calls) => {
-      // Find the most relevant call for current user that is not ended/declined
       const active = calls.find(
         (c) =>
           c.status !== 'ended' &&
@@ -209,13 +219,11 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
         ) {
           notifiedCallsRef.current.add(active.id);
 
-          // In-App Toast & Audio SFX
           triggerNotification(
-            `📞 Incoming ${active.isVideo ? 'Video' : 'Audio'} Call!`,
+            `📞 Incoming Voice Call!`,
             `${active.callerName} is calling you on Kroze Zone!`
           );
 
-          // Native Browser Device Notification (In case user is outside app)
           if ('Notification' in window && Notification.permission === 'granted') {
             try {
               const notif = new Notification(
@@ -263,7 +271,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   }, [activeCall?.status, activeCall?.id]);
 
   // -------------------------------------------------------------
-  // 3. CALL DURATION TIMER (Runs only when BOTH parties in room)
+  // 3. CALL DURATION TIMER
   // -------------------------------------------------------------
   const isParticipant =
     activeCall &&
@@ -291,7 +299,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   }, [bothInRoom]);
 
   // -------------------------------------------------------------
-  // 4. WebRTC PEER CONNECTION & MEDIA STREAM LIFECYCLE
+  // 4. WebRTC AUDIO PIPELINE & AUDIO VISUALIZER
   // -------------------------------------------------------------
   const setupAudioVisualizer = (stream: MediaStream) => {
     try {
@@ -331,12 +339,12 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const barWidth = (canvas.width / bufferLength) * 1.5;
+      const barWidth = (canvas.width / bufferLength) * 1.6;
       let x = 0;
 
       for (let i = 0; i < bufferLength; i++) {
         const barHeight = (dataArray[i] / 255) * canvas.height;
-        ctx.fillStyle = `rgba(52, 211, 153, ${Math.max(0.3, dataArray[i] / 255)})`;
+        ctx.fillStyle = `rgba(52, 211, 153, ${Math.max(0.35, dataArray[i] / 255)})`;
         ctx.fillRect(x, canvas.height - barHeight, barWidth - 2, barHeight);
         x += barWidth + 1;
       }
@@ -366,20 +374,12 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
       remoteStreamRef.current.getTracks().forEach((t) => t.stop());
       remoteStreamRef.current = null;
     }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
     iceCandidatesQueueRef.current = [];
-    setHasRemoteVideo(false);
   };
 
-  // Helper to add or queue ICE candidate
   const addOrQueueCandidate = async (pc: RTCPeerConnection, candidateData: RTCIceCandidateInit) => {
     if (pc.remoteDescription && pc.remoteDescription.type) {
       try {
@@ -392,7 +392,6 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     }
   };
 
-  // Helper to flush queued candidates once remote description is set
   const flushIceCandidates = async (pc: RTCPeerConnection) => {
     if (pc.remoteDescription && pc.remoteDescription.type && iceCandidatesQueueRef.current.length > 0) {
       const candidates = [...iceCandidatesQueueRef.current];
@@ -419,19 +418,16 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
     const setupWebRTC = async () => {
       try {
-        setHasRemoteVideo(false);
         setConnectionStatus('connecting');
 
-        // 1. Get Local Stream (Audio + Video)
+        // 1. Get Local Audio Microphone Stream
         const constraints: MediaStreamConstraints = {
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
-          video: activeCall.isVideo
-            ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
-            : false,
+          video: false,
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -441,13 +437,6 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
         }
 
         localStreamRef.current = stream;
-
-        // Attach local stream to localVideoRef
-        if (localVideoRef.current && activeCall.isVideo) {
-          localVideoRef.current.srcObject = stream;
-          localVideoRef.current.play().catch(() => {});
-        }
-
         setupAudioVisualizer(stream);
 
         // 2. Create WebRTC PeerConnection with STUN servers
@@ -456,21 +445,25 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
           ],
         });
         peerConnectionRef.current = pc;
 
-        // Add local tracks
+        // Add local audio track
         stream.getTracks().forEach((track) => {
           pc.addTrack(track, stream);
         });
 
-        // Track Connection State Changes
+        // Connection State Observer
         pc.onconnectionstatechange = () => {
           if (!isMounted) return;
           console.log('WebRTC connectionState:', pc.connectionState);
           if (pc.connectionState === 'connected') {
             setConnectionStatus('connected');
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.play().catch(() => {});
+            }
           } else if (pc.connectionState === 'connecting' || pc.connectionState === 'new') {
             setConnectionStatus('connecting');
           } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
@@ -478,10 +471,10 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
           }
         };
 
-        // 3. Handle Remote Track
+        // 3. Handle Remote Audio Track
         pc.ontrack = (event) => {
           if (!isMounted) return;
-          console.log('Received remote track:', event.track.kind);
+          console.log('Received remote audio track:', event.track.kind);
 
           if (!remoteStreamRef.current) {
             remoteStreamRef.current = new MediaStream();
@@ -489,7 +482,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
           const remoteStream = remoteStreamRef.current;
 
           if (event.streams && event.streams[0]) {
-            event.streams[0].getTracks().forEach((track) => {
+            event.streams[0].getAudioTracks().forEach((track) => {
               if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
                 remoteStream.addTrack(track);
               }
@@ -500,18 +493,10 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             }
           }
 
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream;
-            remoteVideoRef.current.play().catch((e) => console.warn('Remote video play:', e));
-          }
-
           if (remoteAudioRef.current) {
             remoteAudioRef.current.srcObject = remoteStream;
-            remoteAudioRef.current.play().catch((e) => console.warn('Remote audio play:', e));
+            remoteAudioRef.current.play().catch((e) => console.warn('Remote audio play error:', e));
           }
-
-          const hasVideoTracks = remoteStream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
-          setHasRemoteVideo(hasVideoTracks || event.track.kind === 'video');
         };
 
         // 4. Handle Local ICE Candidates
@@ -527,8 +512,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
         // 5. Signalling Flow
         if (isCaller) {
-          // CALLER CREATES OFFER
-          const offer = await pc.createOffer();
+          const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
           await pc.setLocalDescription(offer);
 
           await updateDoc(doc(db, 'kroze_active_calls', activeCall.id), {
@@ -565,7 +549,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             }
           );
         } else {
-          // RECIPIENT LISTENS FOR OFFER -> CREATES ANSWER
+          // Recipient listens for Offer -> Creates Answer
           unsubCallDoc = onSnapshot(
             doc(db, 'kroze_active_calls', activeCall.id),
             async (snapshot) => {
@@ -619,51 +603,27 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
       if (unsubCandidates) unsubCandidates();
       cleanupWebRTC();
     };
-  }, [bothInRoom, activeCall?.id, isCaller, activeCall?.isVideo]);
+  }, [bothInRoom, activeCall?.id, isCaller]);
 
-  // Bind local/remote streams to media elements whenever UI updates (e.g. fullscreen toggle, video toggle)
+  // Ensure remote audio element stays bound to remoteStreamRef
   useEffect(() => {
-    if (bothInRoom) {
-      if (localVideoRef.current && localStreamRef.current) {
-        if (localVideoRef.current.srcObject !== localStreamRef.current) {
-          localVideoRef.current.srcObject = localStreamRef.current;
-          localVideoRef.current.play().catch(() => {});
-        }
-      }
-      if (remoteVideoRef.current && remoteStreamRef.current) {
-        if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-          remoteVideoRef.current.srcObject = remoteStreamRef.current;
-          remoteVideoRef.current.play().catch(() => {});
-        }
-      }
-      if (remoteAudioRef.current && remoteStreamRef.current) {
-        if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
-          remoteAudioRef.current.srcObject = remoteStreamRef.current;
-          remoteAudioRef.current.play().catch(() => {});
-        }
+    if (bothInRoom && remoteAudioRef.current && remoteStreamRef.current) {
+      if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
+        remoteAudioRef.current.srcObject = remoteStreamRef.current;
+        remoteAudioRef.current.play().catch(() => {});
       }
     }
-  }, [bothInRoom, isFullscreen, hasRemoteVideo, isCamOff, isMuted]);
+  }, [bothInRoom, isFullscreen, isMuted]);
 
   // Toggle Mute
   const handleToggleMute = () => {
+    resumeAudioOnGesture();
     if (localStreamRef.current) {
       localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = isMuted; // Toggle
+        track.enabled = isMuted;
       });
     }
     setIsMuted(!isMuted);
-    SFX.playClick();
-  };
-
-  // Toggle Camera
-  const handleToggleCam = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = isCamOff; // Toggle
-      });
-    }
-    setIsCamOff(!isCamOff);
     SFX.playClick();
   };
 
@@ -671,12 +631,14 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   // 5. CALL ACTIONS (Accept, Decline, Hangup)
   // -------------------------------------------------------------
   const handleAcceptIncomingCall = async () => {
+    resumeAudioOnGesture();
     if (!activeCall) return;
     SFX.playSuccess();
     await acceptCall(activeCall.id);
   };
 
   const handleDeclineIncomingCall = async () => {
+    resumeAudioOnGesture();
     if (!activeCall) return;
     SFX.playHangup();
     await declineCall(activeCall.id);
@@ -684,6 +646,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   };
 
   const handleHangupCall = async () => {
+    resumeAudioOnGesture();
     if (!activeCall || !currentUser) return;
     SFX.playHangup();
     cleanupWebRTC();
@@ -742,9 +705,19 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     </div>
   );
 
+  // Always keep audio element in DOM for continuous audio playback
+  const globalAudioElement = (
+    <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+  );
+
   // If no active call, render gift overlay if present
   if (!activeCall || !currentUser || !isParticipant) {
-    return giftOverlay;
+    return (
+      <>
+        {globalAudioElement}
+        {giftOverlay}
+      </>
+    );
   }
 
   const otherUserName = isCaller ? activeCall.recipientName : activeCall.callerName;
@@ -758,131 +731,135 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   };
 
   // -------------------------------------------------------------
-  // UI CASE A: INCOMING CALL RINGING OVERLAY
+  // UI CASE A: INCOMING VOICE CALL RINGING OVERLAY
   // -------------------------------------------------------------
   if (isIncoming) {
     return (
-      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-md p-5 rounded-3xl bg-slate-950/95 border-2 border-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.3)] backdrop-blur-2xl text-white flex flex-col space-y-4 animate-bounce-short">
-        <div className="flex items-center gap-3">
-          <div className="relative p-3 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
-            <PhoneIncoming className="w-6 h-6 animate-pulse" />
-            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
-          </div>
-          <div className="flex-1">
-            <div className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-              <span>INCOMING {activeCall.isVideo ? 'VIDEO' : 'AUDIO'} CALL</span>
+      <>
+        {globalAudioElement}
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-md p-5 rounded-3xl bg-slate-950/95 border-2 border-emerald-400 shadow-[0_0_50px_rgba(16,185,129,0.3)] backdrop-blur-2xl text-white flex flex-col space-y-4 animate-bounce-short">
+          <div className="flex items-center gap-3">
+            <div className="relative p-3.5 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+              <PhoneIncoming className="w-7 h-7 animate-pulse" />
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-400 animate-ping" />
             </div>
-            <h3 className="text-lg font-black text-white">{activeCall.callerName}</h3>
-            <p className="text-[11px] text-slate-300">Calling you on Kroze Zone...</p>
+            <div className="flex-1">
+              <div className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                <span>INCOMING VOICE CALL</span>
+              </div>
+              <h3 className="text-lg font-black text-white">{activeCall.callerName}</h3>
+              <p className="text-[11px] text-slate-300">Calling you on Kroze Zone...</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleAcceptIncomingCall}
+              className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 transition-transform active:scale-95"
+            >
+              <Phone className="w-4 h-4 fill-slate-950" />
+              <span>Accept Voice</span>
+            </button>
+
+            <button
+              onClick={handleDeclineIncomingCall}
+              className="flex-1 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 transition-transform active:scale-95"
+            >
+              <PhoneOff className="w-4 h-4" />
+              <span>Decline</span>
+            </button>
           </div>
         </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleAcceptIncomingCall}
-            className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 transition-transform active:scale-95"
-          >
-            <Phone className="w-4 h-4 fill-slate-950" />
-            <span>Accept</span>
-          </button>
-
-          <button
-            onClick={handleDeclineIncomingCall}
-            className="flex-1 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 transition-transform active:scale-95"
-          >
-            <PhoneOff className="w-4 h-4" />
-            <span>Decline</span>
-          </button>
-        </div>
-      </div>
+      </>
     );
   }
 
   // -------------------------------------------------------------
-  // UI CASE B: CALLING OUTGOING / WAITING FOR BOTH PARTIES
+  // UI CASE B: OUTGOING CALL / WAITING FOR BOTH PARTIES
   // -------------------------------------------------------------
   if (!bothInRoom) {
     return (
-      <div className="fixed bottom-6 right-6 z-[120] w-[90%] max-w-sm p-5 rounded-3xl bg-slate-950/95 border border-emerald-500/40 shadow-2xl backdrop-blur-xl text-white space-y-4">
-        <div className="flex items-center justify-between border-b border-white/10 pb-3">
-          <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-            <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
-            <span>KROZE CALL ROOM</span>
+      <>
+        {globalAudioElement}
+        <div className="fixed bottom-6 right-6 z-[120] w-[90%] max-w-sm p-5 rounded-3xl bg-slate-950/95 border border-emerald-500/40 shadow-2xl backdrop-blur-xl text-white space-y-4">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+              <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+              <span>KROZE VOICE CALL</span>
+            </div>
+            <span className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider">
+              HD VOICE
+            </span>
           </div>
-          <span className="text-[10px] font-mono text-slate-400">
-            {activeCall.isVideo ? 'VIDEO' : 'AUDIO'}
-          </span>
-        </div>
 
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-rose-500 to-purple-600 p-0.5 shrink-0 shadow-md">
-            <div className="w-full h-full rounded-[14px] bg-slate-900 flex items-center justify-center font-black text-lg text-white">
-              {otherUserName.charAt(0).toUpperCase()}
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 p-0.5 shrink-0 shadow-md">
+              <div className="w-full h-full rounded-[14px] bg-slate-900 flex items-center justify-center font-black text-lg text-emerald-300">
+                {otherUserName.charAt(0).toUpperCase()}
+              </div>
+            </div>
+            <div className="flex-1">
+              <h4 className="text-base font-black text-white">{otherUserName}</h4>
+              <p className="text-xs text-amber-300 font-mono animate-pulse">
+                {!isCaller
+                  ? 'Connecting to voice room...'
+                  : 'Ringing... Waiting for answer...'}
+              </p>
             </div>
           </div>
-          <div className="flex-1">
-            <h4 className="text-base font-black text-white">{otherUserName}</h4>
-            <p className="text-xs text-amber-300 font-mono animate-pulse">
-              {!isCaller
-                ? 'Connecting to call room...'
-                : 'Calling... Waiting for answer...'}
-            </p>
-          </div>
+
+          <p className="text-[11px] text-slate-400 italic text-center">
+            Voice connects automatically when friend joins.
+          </p>
+
+          <button
+            onClick={handleHangupCall}
+            className="w-full py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2"
+          >
+            <PhoneOff className="w-4 h-4" />
+            <span>Cancel Call</span>
+          </button>
         </div>
-
-        <p className="text-[11px] text-slate-400 italic text-center">
-          Call starts as soon as both players enter the call room.
-        </p>
-
-        <button
-          onClick={handleHangupCall}
-          className="w-full py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2"
-        >
-          <PhoneOff className="w-4 h-4" />
-          <span>Cancel Call</span>
-        </button>
-      </div>
+      </>
     );
   }
 
   // -------------------------------------------------------------
-  // UI CASE C: ACTIVE CALL ROOM (FULLSCREEN OR FLOATING PIP)
+  // UI CASE C: ACTIVE LIVE VOICE CALL ROOM
   // -------------------------------------------------------------
   return (
     <div
       className={
         isFullscreen
-          ? 'fixed inset-0 z-[120] bg-slate-950/98 backdrop-blur-2xl p-4 sm:p-8 flex flex-col justify-between text-white transition-all duration-300'
-          : 'fixed bottom-6 right-6 z-[120] w-[90%] max-w-sm p-4 rounded-3xl bg-slate-950/95 border-2 border-emerald-500/50 shadow-[0_0_40px_rgba(16,185,129,0.2)] backdrop-blur-xl text-white space-y-3 transition-all duration-300'
+          ? 'fixed inset-0 z-[120] bg-slate-950/98 backdrop-blur-2xl p-6 sm:p-10 flex flex-col justify-between text-white transition-all duration-300'
+          : 'fixed bottom-6 right-6 z-[120] w-[90%] max-w-sm p-5 rounded-3xl bg-slate-950/95 border-2 border-emerald-500/50 shadow-[0_0_40px_rgba(16,185,129,0.25)] backdrop-blur-xl text-white space-y-4 transition-all duration-300'
       }
     >
-      {/* Hidden Audio element for remote voice playback */}
-      <audio ref={remoteAudioRef} autoPlay playsInline />
+      {globalAudioElement}
 
       {/* Top Bar Header */}
-      <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2.5">
+      <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
           <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">
-            LIVE CALL — {formatTime(callDuration)}
+            VOICE CALL — {formatTime(callDuration)}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Status Badge */}
-          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-mono text-emerald-300 flex items-center gap-1">
+          <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-[10px] font-mono text-emerald-300 flex items-center gap-1">
             <Activity className="w-3 h-3 text-emerald-400" />
             <span>{connectionStatus === 'connected' ? 'HD CONNECTED' : 'CONNECTING'}</span>
           </span>
 
-          {/* Fullscreen / Unfullscreen toggle button */}
           <button
             onClick={() => {
               SFX.playClick();
               setIsFullscreen(!isFullscreen);
             }}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 cursor-pointer transition-colors"
-            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Video'}
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Call'}
           >
             {isFullscreen ? (
               <Minimize2 className="w-4 h-4" />
@@ -893,104 +870,57 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
         </div>
       </div>
 
-      {/* Main Video / Visual Feed Container */}
+      {/* Main Voice Display Area */}
       <div
         className={
           isFullscreen
-            ? 'flex-1 my-4 relative rounded-3xl overflow-hidden bg-slate-900 border-2 border-emerald-500/30 flex items-center justify-center shadow-2xl'
-            : 'relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-900 border border-emerald-500/30 flex items-center justify-center shadow-inner'
+            ? 'flex-1 my-6 rounded-3xl bg-slate-900/80 border-2 border-emerald-500/30 p-8 flex flex-col items-center justify-center space-y-6 relative overflow-hidden shadow-2xl'
+            : 'w-full py-6 rounded-2xl bg-slate-900/80 border border-emerald-500/30 flex flex-col items-center justify-center space-y-3 relative overflow-hidden'
         }
       >
-        {/* Remote Video Feed (Main Display) */}
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className={`w-full h-full object-cover ${activeCall.isVideo && hasRemoteVideo ? 'block' : 'hidden'}`}
-        />
+        {/* Animated Background Pulse */}
+        <div className="absolute w-48 h-48 rounded-full bg-emerald-500/10 blur-3xl animate-pulse pointer-events-none" />
 
-        {/* Remote Avatar Placeholder if Video is Off or Loading */}
-        {(!activeCall.isVideo || !hasRemoteVideo) && (
-          <div className="flex flex-col items-center justify-center space-y-3 text-center p-6">
-            <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-rose-500 via-purple-600 to-indigo-600 p-1 shadow-2xl">
-              <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center font-black text-2xl sm:text-3xl text-emerald-300">
-                {otherUserName.charAt(0).toUpperCase()}
-              </div>
-              <span className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-emerald-400 border-2 border-slate-950 flex items-center justify-center">
-                <Volume2 className="w-3 h-3 text-slate-950 animate-pulse" />
-              </span>
-            </div>
-            <div>
-              <h3 className="text-lg font-black text-white">{otherUserName}</h3>
-              <p className="text-xs text-emerald-400 font-mono">
-                {connectionStatus === 'connected' ? '🎤 Voice Connected' : 'Connecting Audio/Video...'}
-              </p>
+        {/* User Avatar with Glowing Pulse Ring */}
+        <div className="relative">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-600 to-indigo-600 p-1 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
+            <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center font-black text-2xl sm:text-3xl text-emerald-300">
+              {otherUserName.charAt(0).toUpperCase()}
             </div>
           </div>
-        )}
-
-        {/* Local Video Inset (Picture-in-Picture PIP at Bottom-Right) */}
-        {activeCall.isVideo && (
-          <div className="absolute bottom-3 right-3 w-28 h-20 sm:w-36 sm:h-24 rounded-2xl overflow-hidden border-2 border-emerald-400/80 shadow-2xl bg-slate-950 z-20">
-            <video
-              ref={localVideoRef}
-              autoPlay
-              playsInline
-              muted
-              className={`w-full h-full object-cover scale-x-[-1] ${!isCamOff ? 'block' : 'hidden'}`}
-            />
-            {isCamOff && (
-              <div className="w-full h-full bg-slate-900 flex items-center justify-center text-[10px] text-slate-400 font-bold">
-                Cam Off
-              </div>
-            )}
-            <div className="absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded-md bg-black/75 text-[9px] font-mono font-bold text-emerald-300">
-              You
-            </div>
-          </div>
-        )}
-
-        {/* Remote Overlay Label */}
-        <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/70 border border-white/10 text-[10px] font-mono font-bold text-white backdrop-blur-md flex items-center gap-1.5 z-10">
-          <UserIcon className="w-3 h-3 text-emerald-400" />
-          <span>{otherUserName}</span>
+          <span className="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-emerald-400 border-2 border-slate-950 flex items-center justify-center">
+            <Volume2 className="w-3.5 h-3.5 text-slate-950 animate-pulse" />
+          </span>
         </div>
 
-        {/* Live Microphone Audio Waveform Bar */}
-        <div className="absolute bottom-3 left-3 w-32 sm:w-48 h-6 rounded-xl bg-black/60 border border-emerald-500/30 px-2 flex items-center justify-center z-10">
-          <canvas ref={canvasRef} className="w-full h-full" width={180} height={24} />
+        {/* Participant Name & Status */}
+        <div className="text-center z-10">
+          <h3 className="text-lg font-black text-white">{otherUserName}</h3>
+          <p className="text-xs text-emerald-400 font-mono">
+            {connectionStatus === 'connected' ? '🎤 2-Way Voice Active' : 'Connecting Audio...'}
+          </p>
+        </div>
+
+        {/* Live Audio Visualizer Canvas */}
+        <div className="w-48 sm:w-64 h-8 rounded-xl bg-black/50 border border-emerald-500/30 px-2 flex items-center justify-center z-10 mt-2">
+          <canvas ref={canvasRef} className="w-full h-full" width={220} height={32} />
         </div>
       </div>
 
-      {/* Bottom Controls Bar */}
-      <div className="flex items-center justify-center gap-3 pt-1">
-        {/* Mute Mic Toggle */}
+      {/* Bottom Control Bar */}
+      <div className="flex items-center justify-center gap-4 pt-1">
+        {/* Mute/Unmute Mic Button */}
         <button
           onClick={handleToggleMute}
-          className={`p-3 rounded-2xl font-bold text-xs flex items-center gap-2 cursor-pointer transition-transform active:scale-95 ${
+          className={`p-4 rounded-2xl font-bold text-xs flex items-center gap-2 cursor-pointer transition-transform active:scale-95 ${
             isMuted
               ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
               : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
           }`}
           title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
         >
-          {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
         </button>
-
-        {/* Camera Toggle if video */}
-        {activeCall.isVideo && (
-          <button
-            onClick={handleToggleCam}
-            className={`p-3 rounded-2xl font-bold text-xs flex items-center gap-2 cursor-pointer transition-transform active:scale-95 ${
-              isCamOff
-                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40'
-            }`}
-            title={isCamOff ? 'Turn Camera On' : 'Turn Camera Off'}
-          >
-            {isCamOff ? <CameraOff className="w-5 h-5" /> : <Camera className="w-5 h-5" />}
-          </button>
-        )}
 
         {/* Fullscreen Toggle */}
         <button
@@ -998,19 +928,19 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             SFX.playClick();
             setIsFullscreen(!isFullscreen);
           }}
-          className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer border border-white/10"
+          className="p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs cursor-pointer border border-white/10"
           title={isFullscreen ? 'Unfullscreen' : 'Fullscreen'}
         >
-          {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+          {isFullscreen ? <Minimize2 className="w-6 h-6" /> : <Maximize2 className="w-6 h-6" />}
         </button>
 
-        {/* Hang Up Button */}
+        {/* End Call Button */}
         <button
           onClick={handleHangupCall}
-          className="px-6 py-3 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center gap-2 transition-transform active:scale-95"
+          className="px-7 py-4 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center gap-2 transition-transform active:scale-95"
         >
-          <PhoneOff className="w-5 h-5" />
-          <span>Hang Up</span>
+          <PhoneOff className="w-6 h-6" />
+          <span>End Call</span>
         </button>
       </div>
 
@@ -1018,4 +948,3 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     </div>
   );
 };
-

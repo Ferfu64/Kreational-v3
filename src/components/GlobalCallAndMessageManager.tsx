@@ -56,12 +56,15 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     amount: number;
   } | null>(null);
 
-  // Audio Stream Refs
+  // Audio Stream & WebRTC Refs
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const hasProcessedOfferRef = useRef<boolean>(false);
+  const hasProcessedAnswerRef = useRef<boolean>(false);
+  const isSettingRemoteDescRef = useRef<boolean>(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -81,11 +84,19 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
   // Ensure AudioContext and audio elements play on any user gesture
   const resumeAudioOnGesture = () => {
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().catch(() => {});
-    }
-    if (remoteAudioRef.current && remoteAudioRef.current.paused && remoteStreamRef.current) {
-      remoteAudioRef.current.play().catch(() => {});
+    try {
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(() => {});
+      }
+      if (remoteAudioRef.current) {
+        if (remoteStreamRef.current && remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
+          remoteAudioRef.current.srcObject = remoteStreamRef.current;
+        }
+        remoteAudioRef.current.volume = 1.0;
+        remoteAudioRef.current.play().catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Audio resume error:', e);
     }
   };
 
@@ -201,7 +212,12 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     }
 
     const unsub = subscribeToUserCalls(currentUser.id, (calls) => {
-      const active = calls.find(
+      // Sort calls by most recent activity
+      const sortedCalls = [...calls].sort(
+        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+      );
+
+      const active = sortedCalls.find(
         (c) =>
           c.status !== 'ended' &&
           c.status !== 'declined' &&
@@ -381,7 +397,10 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
   };
 
   const addOrQueueCandidate = async (pc: RTCPeerConnection, candidateData: RTCIceCandidateInit) => {
-    if (pc.remoteDescription && pc.remoteDescription.type) {
+    if (!candidateData || (!candidateData.candidate && candidateData.candidate !== '')) {
+      return;
+    }
+    if (pc.remoteDescription && pc.remoteDescription.type && !isSettingRemoteDescRef.current) {
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidateData));
       } catch (err) {
@@ -416,6 +435,11 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     let unsubCallDoc: (() => void) | null = null;
     let unsubCandidates: (() => void) | null = null;
 
+    hasProcessedOfferRef.current = false;
+    hasProcessedAnswerRef.current = false;
+    isSettingRemoteDescRef.current = false;
+    iceCandidatesQueueRef.current = [];
+
     const setupWebRTC = async () => {
       try {
         setConnectionStatus('connecting');
@@ -437,21 +461,29 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
         }
 
         localStreamRef.current = stream;
-        setupAudioVisualizer(stream);
 
-        // 2. Create WebRTC PeerConnection with STUN servers
+        // 2. Create WebRTC PeerConnection with reliable STUN servers
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
             { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
           ],
+          iceCandidatePoolSize: 10,
         });
         peerConnectionRef.current = pc;
 
-        // Add local audio track
-        stream.getTracks().forEach((track) => {
+        // Add explicit bidirectional audio transceiver and local audio tracks
+        try {
+          pc.addTransceiver('audio', { direction: 'sendrecv' });
+        } catch (e) {
+          console.warn('addTransceiver not supported or failed:', e);
+        }
+
+        stream.getAudioTracks().forEach((track) => {
           pc.addTrack(track, stream);
         });
 
@@ -471,32 +503,40 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
           }
         };
 
+        pc.oniceconnectionstatechange = () => {
+          if (!isMounted) return;
+          console.log('WebRTC iceConnectionState:', pc.iceConnectionState);
+          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            setConnectionStatus('connected');
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.play().catch(() => {});
+            }
+          }
+        };
+
         // 3. Handle Remote Audio Track
         pc.ontrack = (event) => {
           if (!isMounted) return;
-          console.log('Received remote audio track:', event.track.kind);
+          console.log('Received remote audio track:', event.track.kind, event.track.id);
 
-          if (!remoteStreamRef.current) {
-            remoteStreamRef.current = new MediaStream();
-          }
-          const remoteStream = remoteStreamRef.current;
-
-          if (event.streams && event.streams[0]) {
-            event.streams[0].getAudioTracks().forEach((track) => {
-              if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
-                remoteStream.addTrack(track);
-              }
-            });
-          } else if (event.track) {
-            if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
-              remoteStream.addTrack(event.track);
-            }
-          }
+          const remoteStream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+          remoteStreamRef.current = remoteStream;
 
           if (remoteAudioRef.current) {
             remoteAudioRef.current.srcObject = remoteStream;
-            remoteAudioRef.current.play().catch((e) => console.warn('Remote audio play error:', e));
+            remoteAudioRef.current.volume = 1.0;
+            remoteAudioRef.current.play().catch((e) => console.warn('Remote audio play ontrack error:', e));
           }
+
+          event.track.onunmute = () => {
+            console.log('Remote audio track unmuted');
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.play().catch(() => {});
+            }
+          };
+
+          // Visualize remote speaker voice
+          setupAudioVisualizer(remoteStream);
         };
 
         // 4. Handle Local ICE Candidates
@@ -525,13 +565,21 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             doc(db, 'kroze_active_calls', activeCall.id),
             async (snapshot) => {
               const data = snapshot.data();
-              if (data?.answer && pc.signalingState !== 'closed' && !pc.currentRemoteDescription) {
+              if (
+                data?.answer &&
+                !hasProcessedAnswerRef.current &&
+                pc.signalingState === 'have-local-offer'
+              ) {
+                hasProcessedAnswerRef.current = true;
                 try {
+                  isSettingRemoteDescRef.current = true;
                   const rtcAnswer = new RTCSessionDescription(data.answer);
                   await pc.setRemoteDescription(rtcAnswer);
+                  isSettingRemoteDescRef.current = false;
                   await flushIceCandidates(pc);
                 } catch (e) {
-                  console.warn('Set remote desc error:', e);
+                  isSettingRemoteDescRef.current = false;
+                  console.warn('Caller set remote answer error:', e);
                 }
               }
             }
@@ -543,7 +591,10 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             (snapshot) => {
               snapshot.docChanges().forEach((change) => {
                 if (change.type === 'added') {
-                  addOrQueueCandidate(pc, change.doc.data() as RTCIceCandidateInit);
+                  const candidateData = change.doc.data() as RTCIceCandidateInit;
+                  if (candidateData && (candidateData.candidate || (candidateData as any).sdpMid !== undefined)) {
+                    addOrQueueCandidate(pc, candidateData);
+                  }
                 }
               });
             }
@@ -556,12 +607,15 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
               const data = snapshot.data();
               if (
                 data?.offer &&
-                pc.signalingState !== 'closed' &&
-                !pc.currentRemoteDescription
+                !hasProcessedOfferRef.current &&
+                (pc.signalingState === 'stable' || pc.signalingState === 'have-local-offer')
               ) {
+                hasProcessedOfferRef.current = true;
                 try {
+                  isSettingRemoteDescRef.current = true;
                   const rtcOffer = new RTCSessionDescription(data.offer);
                   await pc.setRemoteDescription(rtcOffer);
+                  isSettingRemoteDescRef.current = false;
                   await flushIceCandidates(pc);
 
                   const answer = await pc.createAnswer();
@@ -572,6 +626,7 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
                     updatedAt: Date.now(),
                   });
                 } catch (err) {
+                  isSettingRemoteDescRef.current = false;
                   console.warn('Recipient offer handling error:', err);
                 }
               }
@@ -584,7 +639,10 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
             (snapshot) => {
               snapshot.docChanges().forEach((change) => {
                 if (change.type === 'added') {
-                  addOrQueueCandidate(pc, change.doc.data() as RTCIceCandidateInit);
+                  const candidateData = change.doc.data() as RTCIceCandidateInit;
+                  if (candidateData && (candidateData.candidate || (candidateData as any).sdpMid !== undefined)) {
+                    addOrQueueCandidate(pc, candidateData);
+                  }
                 }
               });
             }
@@ -610,10 +668,27 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
     if (bothInRoom && remoteAudioRef.current && remoteStreamRef.current) {
       if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
         remoteAudioRef.current.srcObject = remoteStreamRef.current;
+        remoteAudioRef.current.volume = 1.0;
         remoteAudioRef.current.play().catch(() => {});
       }
     }
   }, [bothInRoom, isFullscreen, isMuted]);
+
+  // User gesture interaction unlocker during active call
+  useEffect(() => {
+    if (!bothInRoom) return;
+
+    const handleUnlock = () => {
+      resumeAudioOnGesture();
+    };
+
+    window.addEventListener('click', handleUnlock);
+    window.addEventListener('touchstart', handleUnlock);
+    return () => {
+      window.removeEventListener('click', handleUnlock);
+      window.removeEventListener('touchstart', handleUnlock);
+    };
+  }, [bothInRoom]);
 
   // Toggle Mute
   const handleToggleMute = () => {
@@ -707,7 +782,20 @@ export const GlobalCallAndMessageManager: React.FC<GlobalCallAndMessageManagerPr
 
   // Always keep audio element in DOM for continuous audio playback
   const globalAudioElement = (
-    <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+    <audio
+      ref={remoteAudioRef}
+      autoPlay
+      playsInline
+      style={{
+        position: 'fixed',
+        top: -9999,
+        left: -9999,
+        width: '1px',
+        height: '1px',
+        opacity: 0.001,
+        pointerEvents: 'none',
+      }}
+    />
   );
 
   // If no active call, render gift overlay if present

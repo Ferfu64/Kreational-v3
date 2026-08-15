@@ -29,7 +29,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
   const isAdmin = user.role === 'admin';
 
   const canPayShards = iconShards >= 10;
-  const canPayKrests = krests >= 25;
+  const canPayKrests = krests >= 5000;
   const canAfford = isAdmin || canPayShards || canPayKrests;
 
   // Determine default payment method
@@ -206,7 +206,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
           <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/60 to-slate-900 border border-purple-500/30 space-y-3">
             <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider flex items-center justify-between">
               <span>Avatar Customization Cost</span>
-              <span className="text-amber-300 font-normal">Requires 10 Shards OR 25 Krests</span>
+              <span className="text-amber-300 font-normal">Requires 10 Shards OR 5,000 Krests</span>
             </h4>
 
             {!isAdmin && (
@@ -242,7 +242,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold flex items-center gap-1">
-                      <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Pay 25 Krests
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Pay 5,000 Krests
                     </span>
                     {paymentMethod === 'krests' && <Check className="w-3.5 h-3.5 text-amber-300" />}
                   </div>
@@ -262,7 +262,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
             {!canAfford && (
               <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>You need at least 10 Icon Shards or 25 Krests to change custom photo.</span>
+                <span>You need at least 10 Icon Shards or 5,000 Krests to change custom photo.</span>
               </div>
             )}
           </div>
@@ -292,7 +292,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
                 ? 'Apply Avatar'
                 : paymentMethod === 'shards'
                 ? 'Apply (-10 Shards)'
-                : 'Apply (-25 Krests)'}
+                : 'Apply (-5,000 Krests)'}
             </span>
           </button>
         </div>

@@ -90,7 +90,30 @@ class GamesModule {
   }
 
   private persistCustomGames(): void {
-    // Custom games are persisted server-sided in Firestore via createGameStore/updateGameStore
+    try {
+      const allGames = Array.from(this.gamesMap.values());
+      safeSet(STORAGE_KEY, JSON.stringify(allGames));
+    } catch (err) {
+      console.warn('GamesModule failed to persist games list:', err);
+    }
+  }
+
+  public syncActiveGamesToDefault(extraGames: Game[] = []): Game[] {
+    // Merge static default games first
+    DEFAULT_GAMES.forEach((game) => {
+      if (!this.gamesMap.has(game.id)) {
+        this.gamesMap.set(game.id, game);
+      }
+    });
+
+    // Merge any passed active games
+    extraGames.forEach((game) => {
+      this.gamesMap.set(game.id, game);
+    });
+
+    this.enforceExclusiveGoldGames();
+    this.persistCustomGames();
+    return this.getAllGames();
   }
 }
 

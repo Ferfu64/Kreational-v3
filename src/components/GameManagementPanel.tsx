@@ -6,8 +6,9 @@ import {
   createGameStore,
   updateGameStore,
   deleteGameStore,
+  syncAllActiveGamesToDefaultStore,
 } from '../services/firestoreStore';
-import { Shield, Plus, Edit3, Trash2, RefreshCw, Gamepad2, Code, Check } from 'lucide-react';
+import { Shield, Plus, Edit3, Trash2, RefreshCw, Gamepad2, Code, Check, Sparkles } from 'lucide-react';
 
 interface GameManagementPanelProps {
   tiers: Tier[];
@@ -35,6 +36,8 @@ export const GameManagementPanel: React.FC<GameManagementPanelProps> = ({
   const [editEmbedCode, setEditEmbedCode] = useState('');
   const [editOrder, setEditOrder] = useState('1');
   const [updating, setUpdating] = useState(false);
+  const [syncingDefault, setSyncingDefault] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
 
   const fetchGames = async () => {
     setLoading(true);
@@ -45,6 +48,22 @@ export const GameManagementPanel: React.FC<GameManagementPanelProps> = ({
       console.warn('Fetch games store error:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncToDefault = async () => {
+    setSyncingDefault(true);
+    setSyncSuccess(false);
+    try {
+      const synced = await syncAllActiveGamesToDefaultStore(games);
+      setGames(synced);
+      if (onGamesUpdated) onGamesUpdated();
+      setSyncSuccess(true);
+      setTimeout(() => setSyncSuccess(false), 3500);
+    } catch (err) {
+      console.warn('Sync to default failed:', err);
+    } finally {
+      setSyncingDefault(false);
     }
   };
 
@@ -133,23 +152,47 @@ export const GameManagementPanel: React.FC<GameManagementPanelProps> = ({
         <BrandingFooter variant="prominent" />
       </div>
 
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-2xl font-mono font-bold text-white flex items-center gap-2">
             <Shield className="w-6 h-6 text-rose-400" />
             <span>Games Management Panel</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Add, update, or remove games across all 8 tiers. Supports full iframe tags or bare URLs.
+            Add, update, or remove games across all tiers. Supports full iframe tags or bare URLs.
           </p>
         </div>
-        <button
-          onClick={fetchGames}
-          className="p-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span>Refresh Games</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSyncToDefault}
+            disabled={syncingDefault}
+            className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              syncSuccess
+                ? 'bg-emerald-600/30 border border-emerald-500/50 text-emerald-300'
+                : 'bg-purple-600 hover:bg-purple-500 text-white shadow-md shadow-purple-950/60'
+            }`}
+            title="Sync all currently active games into the permanent default list and Firestore"
+          >
+            {syncSuccess ? (
+              <>
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Default List Synced!</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className={`w-4 h-4 ${syncingDefault ? 'animate-spin' : ''}`} />
+                <span>{syncingDefault ? 'Syncing...' : 'Sync Games to Default'}</span>
+              </>
+            )}
+          </button>
+          <button
+            onClick={fetchGames}
+            className="p-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

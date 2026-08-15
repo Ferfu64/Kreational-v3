@@ -542,9 +542,9 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 )}
               </h4>
               <p className="text-[11px] text-slate-300 leading-tight mt-0.5">
-                {iconShards >= 10
-                  ? 'You have 10 Icon Shards! Go to your Profile to upload any picture from your device gallery.'
-                  : 'Collect 10 Icon Shards from Krates below to unlock uploading custom images from your device gallery.'}
+                {iconShards >= 10 || krests >= 5000
+                  ? 'You can change your profile picture in your Profile modal (Costs 10 Shards or 5,000 Krests).'
+                  : `Unlock custom photo uploads with 10 Icon Shards or 5,000 Krests in your Profile!` }
               </p>
             </div>
           </div>

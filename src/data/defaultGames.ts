@@ -75,4 +75,19 @@ export const DEFAULT_GAMES: Game[] = [
   { id: 'master_05', title: 'Blumbgi Rocket', tier: 'master', embedCode: '<iframe src="https://vaz63.github.io/g16/class-413" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 5 },
   { id: 'master_06', title: 'Blumbgi Ball', tier: 'master', embedCode: '<iframe src="https://vaz63.github.io/g16/class-419" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 6 },
   { id: 'master_07', title: 'Blumgi Soccer', tier: 'master', embedCode: '<iframe src="https://labgstore1812.github.io/g68/class-1050" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 7 },
+
+  // PRO TIER
+  { id: 'pro_01', title: 'Moto X3M', tier: 'pro', embedCode: '<iframe src="https://polytrack-free.github.io/lesson306/lesson-10" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 1 },
+  { id: 'pro_02', title: 'Drive Mad', tier: 'pro', embedCode: '<iframe src="https://polytrack-free.github.io/lesson85/lesson-2122" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 2 },
+  { id: 'pro_03', title: 'Retro Bowl', tier: 'pro', embedCode: '<iframe src="https://polytrack-free.github.io/lesson83/lesson-2115" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 3 },
+  { id: 'pro_04', title: 'Eggy Car', tier: 'pro', embedCode: '<iframe src="https://polytrack-free.github.io/lesson306/lesson-11" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 4 },
+  { id: 'pro_05', title: 'PolyTrack', tier: 'pro', embedCode: '<iframe src="https://polytrack-free.github.io/polytrack" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 5 },
+  { id: 'pro_06', title: '1v1.LOL', tier: 'pro', embedCode: '<iframe src="https://quiz-8.com/_games/1v1-lol" style="border: none; width: 100%; height: 100%; margin: 0px;"></iframe>', order: 6 },
+
+  // AZGAMES TIER
+  { id: 'azgames_01', title: 'Drift Boss', tier: 'azgames', embedCode: '<iframe src="https://polytrack-free.github.io/lesson306/lesson-13" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 1 },
+  { id: 'azgames_02', title: 'OvO', tier: 'azgames', embedCode: '<iframe src="https://polytrack-free.github.io/lesson306/lesson-14" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 2 },
+  { id: 'azgames_03', title: 'Stickman Hook', tier: 'azgames', embedCode: '<iframe src="https://polytrack-free.github.io/lesson306/lesson-15" width="100%" height="600px" frameborder="0" allowfullscreen scrolling="no" allow="autoplay; gamepad; fullscreen"></iframe>', order: 3 },
+  { id: 'azgames_04', title: 'Slope', tier: 'azgames', embedCode: '<iframe src="https://quiz-8.com/_games/slope" style="border: none; width: 100%; height: 100%; margin: 0px;"></iframe>', order: 4 },
+  { id: 'azgames_05', title: 'Smash Karts', tier: 'azgames', embedCode: '<iframe src="https://quiz-8.com/_games/smash-karts" style="border: none; width: 100%; height: 100%; margin: 0px;"></iframe>', order: 5 },
 ];

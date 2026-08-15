@@ -378,18 +378,43 @@ export async function fetchAllGamesStore(): Promise<Game[]> {
       gamesFromDb.push(docSnap.data() as Game);
     });
 
-    if (gamesFromDb.length === 0) {
-      for (const game of DEFAULT_GAMES) {
-        await setDoc(doc(db, GAMES_COLLECTION, game.id), game).catch(() => {});
+    // Merge default games with database games
+    const dbGameIds = new Set(gamesFromDb.map((g) => g.id));
+    const missingDefaults = DEFAULT_GAMES.filter((g) => !dbGameIds.has(g.id));
+
+    if (missingDefaults.length > 0) {
+      // Seed missing default games into Firestore
+      for (const game of missingDefaults) {
+        setDoc(doc(db, GAMES_COLLECTION, game.id), game).catch(() => {});
+        gamesFromDb.push(game);
       }
-      gamesFromDb = [...DEFAULT_GAMES];
     }
+
     sharedGamesModule.syncFromFirestore(gamesFromDb);
   } catch (err) {
-    console.warn('Firestore fetch games failed, relying on shared games module:', err);
+    console.warn('Firestore fetch games failed, relying on shared games module & default list:', err);
+    sharedGamesModule.syncActiveGamesToDefault();
   }
 
   return sharedGamesModule.getAllGames();
+}
+
+/**
+ * Synchronizes all currently active games into the default games registry and Firestore.
+ */
+export async function syncAllActiveGamesToDefaultStore(extraGames: Game[] = []): Promise<Game[]> {
+  const allSynced = sharedGamesModule.syncActiveGamesToDefault(extraGames);
+
+  // Persist all active games to Firestore
+  try {
+    for (const game of allSynced) {
+      await setDoc(doc(db, GAMES_COLLECTION, game.id), game).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('Sync all games to Firestore failed:', err);
+  }
+
+  return allSynced;
 }
 
 export async function createGameStore(game: Game): Promise<void> {

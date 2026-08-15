@@ -85,9 +85,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (iconShards < 10 && krests < 25 && user.role !== 'admin') {
+    if (iconShards < 10 && krests < 5000 && user.role !== 'admin') {
       SFX.playError();
-      setUploadError('You need 10 Icon Shards or 25 Krests to unlock custom photo upload!');
+      setUploadError('You need 10 Icon Shards or 5,000 Krests to unlock custom photo upload!');
       return;
     }
 
@@ -124,7 +124,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     if (paymentMethod === 'shards') {
       newShards = Math.max(0, iconShards - 10);
     } else if (paymentMethod === 'krests') {
-      newKrests = Math.max(0, krests - 25);
+      newKrests = Math.max(0, krests - 5000);
     }
 
     const updatedUser: User = {
@@ -195,14 +195,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               {/* Gallery Image Upload Trigger Button */}
               <button
                 onClick={() => {
-                  if (iconShards >= 10 || krests >= 25 || user.role === 'admin') {
+                  if (iconShards >= 10 || krests >= 5000 || user.role === 'admin') {
                     fileInputRef.current?.click();
                   } else {
-                    setUploadError('Uploading a custom photo requires 10 Icon Shards or 25 Krests!');
+                    setUploadError('Uploading a custom photo requires 10 Icon Shards or 5,000 Krests!');
                   }
                 }}
                 className="absolute -bottom-2 -right-2 p-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white border border-white/20 shadow-lg shadow-purple-950/80 transition-all cursor-pointer group-hover:scale-110"
-                title="Scale & Upload Profile Photo (Costs 10 Shards or 25 Krests)"
+                title="Scale & Upload Profile Photo (Costs 10 Shards or 5,000 Krests)"
               >
                 <Upload className="w-3.5 h-3.5" />
               </button>

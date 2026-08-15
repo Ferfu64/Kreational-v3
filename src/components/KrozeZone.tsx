@@ -37,9 +37,18 @@ import { SFX } from '../utils/sfx';
 import { generateQRCodeSVG, getDeterministicFriendCode, formatFriendCode } from '../utils/qrCodeGenerator';
 import { fetchAllUsers, saveFullUserAccountToFirestore } from '../services/firestoreStore';
 import { db } from '../lib/firebase';
-import { doc, setDoc, getDoc, collection, onSnapshot, addDoc, query, where, orderBy } from 'firebase/firestore';
+import { doc, setDoc, collection, onSnapshot, addDoc } from 'firebase/firestore';
 import { triggerNotification } from '../utils/notificationManager';
 import { initiateCall, createPrivateCallRoom } from '../services/callService';
+import {
+  FriendEntry,
+  subscribeToUserFriends,
+  addFriendConnection,
+  removeFriendConnection,
+  findUserByQuery,
+  syncUserFriendshipsToServer,
+  startPresenceHeartbeat,
+} from '../services/friendsService';
 
 interface KrozeZoneProps {
   user: User;
@@ -55,15 +64,6 @@ export interface ChatMessage {
   recipientId: string;
   text: string;
   timestamp: number;
-}
-
-export interface FriendEntry {
-  id: string;
-  username: string;
-  friendCode: string;
-  online: boolean;
-  avatarFrame?: string;
-  background?: string;
 }
 
 export const KrozeZone: React.FC<KrozeZoneProps> = ({
@@ -113,30 +113,50 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
   const formattedCode = formatFriendCode(myFriendCode);
   const qrCodeSvg = generateQRCodeSVG(myFriendCode, 180);
 
-  // Fetch registered accounts and friends list
+  // Fetch registered accounts, initialize presence heartbeat and ensure server friendship records exist
   useEffect(() => {
+    const stopHeartbeat = startPresenceHeartbeat(user, 'In Kroze Zone');
     fetchAllUsers().then((users) => {
       setAllUsers(users);
+      syncUserFriendshipsToServer(user, users);
+    });
+    return () => {
+      stopHeartbeat();
+    };
+  }, [user.id, user.username]);
 
-      // Friends are stored on user.notifiedApprovals
-      const friendIds = user.notifiedApprovals || [];
-      const matched = users
-        .filter((u) => u.id !== user.id && friendIds.includes(u.id))
-        .map((u) => ({
-          id: u.id,
-          username: u.username,
-          friendCode: getDeterministicFriendCode(u.id),
-          online: true,
-          avatarFrame: u.cosmetics?.avatarFrame,
-          background: u.cosmetics?.background,
-        }));
+  // Real-time server-side friend listener across all sessions & devices
+  useEffect(() => {
+    const unsub = subscribeToUserFriends(user.id, (freshFriends) => {
+      setFriendsList(freshFriends);
+      if (freshFriends.length > 0) {
+        setSelectedFriend((prev) => {
+          if (!prev) return freshFriends[0];
+          const exists = freshFriends.find((f) => f.id === prev.id);
+          return exists || freshFriends[0];
+        });
+      } else {
+        setSelectedFriend(null);
+      }
 
-      setFriendsList(matched);
-      if (matched.length > 0 && !selectedFriend) {
-        setSelectedFriend(matched[0]);
+      // Update user state if different
+      const freshFriendIds = freshFriends.map((f) => f.id);
+      const currentFriendIds = user.friends || user.notifiedApprovals || [];
+      const isDifferent =
+        freshFriendIds.length !== currentFriendIds.length ||
+        freshFriendIds.some((id) => !currentFriendIds.includes(id));
+
+      if (isDifferent) {
+        onUpdateUser({
+          ...user,
+          friends: freshFriendIds,
+          notifiedApprovals: freshFriendIds,
+        });
       }
     });
-  }, [user.id, user.notifiedApprovals]);
+
+    return () => unsub();
+  }, [user.id]);
 
   // Real-time chat listener for selected friend
   useEffect(() => {
@@ -217,16 +237,14 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
   }, [activeTab, facingMode]);
 
   // Process & Match 10-Digit Friend Code or Scanned QR
-  const handleProcessCode = (codeStr: string) => {
+  const handleProcessCode = async (codeStr: string) => {
     const cleanCode = codeStr.replace(/\D/g, '').substring(0, 10);
-    if (!cleanCode || cleanCode.length < 5) {
+    if (!cleanCode || cleanCode.length < 4) {
       SFX.playError();
       return;
     }
 
-    const matched = allUsers.find(
-      (u) => u.id !== user.id && getDeterministicFriendCode(u.id) === cleanCode
-    );
+    const matched = await findUserByQuery(cleanCode, user.id, allUsers);
 
     const isAlreadyFriend = friendsList.some(
       (f) => f.id === matched?.id || getDeterministicFriendCode(f.id) === cleanCode
@@ -234,7 +252,7 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
 
     SFX.playSuccess();
     setScannedResult({
-      matchedUser: matched,
+      matchedUser: matched || undefined,
       code: cleanCode,
       isAlreadyFriend,
     });
@@ -259,83 +277,73 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Handle Add Friend via 10-Digit Code or QR Code string (Bi-directional)
-  const handleAddFriend = async () => {
-    const cleanInput = friendCodeInput.replace(/\D/g, '');
-    if (cleanInput.length < 5) {
+  // Handle Add Friend via 10-Digit Code, Username, or Object (Bi-directional Server Firestore Sync)
+  const handleAddFriend = async (targetOverride?: User | string) => {
+    const queryTerm =
+      typeof targetOverride === 'string'
+        ? targetOverride
+        : targetOverride
+        ? targetOverride.id
+        : friendCodeInput;
+
+    if (!queryTerm || !queryTerm.trim()) {
       SFX.playError();
-      setAddFriendStatus({ text: 'Please enter a valid 10-digit Kroze Friend Code!', success: false });
+      setAddFriendStatus({ text: 'Please enter a 10-digit friend code or username!', success: false });
       return;
     }
 
-    // Match code against all registered users
-    const matchedUser = allUsers.find(
-      (u) => u.id !== user.id && getDeterministicFriendCode(u.id) === cleanInput
-    );
-
-    if (!matchedUser) {
-      // Fallback: Pick another available account or create candidate
-      const candidate = allUsers.find((u) => u.id !== user.id) || {
-        id: `friend-${cleanInput}`,
-        username: `KrozeGamer_${cleanInput.substring(0, 4)}`,
-      };
-
-      const userFriends = Array.from(new Set([...(user.notifiedApprovals || []), candidate.id]));
-      const updatedUser: User = { ...user, notifiedApprovals: userFriends };
-      onUpdateUser(updatedUser);
-      await saveFullUserAccountToFirestore(updatedUser);
-
-      SFX.playSuccess();
-      setAddFriendStatus({ text: `🎉 Added ${candidate.username} as a Kroze Friend!`, success: true });
-      setFriendCodeInput('');
+    const cleanInput = queryTerm.trim();
+    if (cleanInput.length < 2) {
+      SFX.playError();
+      setAddFriendStatus({ text: 'Please enter a valid friend code or username!', success: false });
       return;
     }
 
-    // Bi-directional friend connection
-    const userFriends = Array.from(new Set([...(user.notifiedApprovals || []), matchedUser.id]));
-    const updatedUser: User = { ...user, notifiedApprovals: userFriends };
-    onUpdateUser(updatedUser);
-    await saveFullUserAccountToFirestore(updatedUser);
+    try {
+      const targetUser =
+        typeof targetOverride === 'object' && targetOverride
+          ? targetOverride
+          : await findUserByQuery(cleanInput, user.id, allUsers);
 
-    // Also add current user to matchedUser's friend list!
-    const targetInAll = allUsers.find((u) => u.id === matchedUser.id);
-    if (targetInAll) {
-      const targetFriends = Array.from(new Set([...(targetInAll.notifiedApprovals || []), user.id]));
-      const updatedTarget: User = { ...targetInAll, notifiedApprovals: targetFriends };
-      await saveFullUserAccountToFirestore(updatedTarget);
+      if (!targetUser) {
+        SFX.playError();
+        setAddFriendStatus({ text: 'Could not locate that user in the Kroze Network.', success: false });
+        return;
+      }
+
+      if (targetUser.id === user.id) {
+        SFX.playError();
+        setAddFriendStatus({ text: 'You cannot add your own account as a friend!', success: false });
+        return;
+      }
+
+      const res = await addFriendConnection(user, targetUser);
+      if (res.success) {
+        SFX.playSuccess();
+        triggerNotification('🤝 New Kroze Friend Added!', `You and ${targetUser.username} are now friends permanently!`);
+        setAddFriendStatus({ text: res.message, success: true });
+        setFriendCodeInput('');
+      } else {
+        SFX.playError();
+        setAddFriendStatus({ text: res.message, success: false });
+      }
+    } catch (err) {
+      console.warn('handleAddFriend error:', err);
+      SFX.playError();
+      setAddFriendStatus({ text: 'Failed to add friend. Please try again.', success: false });
     }
-
-    SFX.playSuccess();
-    triggerNotification('🤝 New Kroze Friend Added!', `You and ${matchedUser.username} are now friends!`);
-    setAddFriendStatus({ text: `🎉 Connected as friends with ${matchedUser.username}!`, success: true });
-    setFriendCodeInput('');
   };
 
   // Handle Unfriend
   const handleUnfriend = async (friendId: string) => {
     SFX.playClick();
-
-    // 1. Remove friendId from user.notifiedApprovals
-    const updatedUserFriends = (user.notifiedApprovals || []).filter((id) => id !== friendId);
-    const updatedUser: User = { ...user, notifiedApprovals: updatedUserFriends };
-    onUpdateUser(updatedUser);
-    await saveFullUserAccountToFirestore(updatedUser);
-
-    // 2. Remove user.id from friend's notifiedApprovals in Firestore
     const friendAccount = allUsers.find((u) => u.id === friendId);
-    if (friendAccount) {
-      const updatedFriendApprovals = (friendAccount.notifiedApprovals || []).filter((id) => id !== user.id);
-      const updatedFriendAccount: User = { ...friendAccount, notifiedApprovals: updatedFriendApprovals };
-      await saveFullUserAccountToFirestore(updatedFriendAccount);
-    }
+    await removeFriendConnection(user.id, friendId, user, friendAccount);
 
-    // 3. Clear selectedFriend if match
     if (selectedFriend?.id === friendId) {
       setSelectedFriend(null);
     }
-
-    // 4. Update local friends state
-    setFriendsList((prev) => prev.filter((f) => f.id !== friendId));
+    SFX.playSuccess();
     setAddFriendStatus({ text: 'Removed friend successfully.', success: true });
   };
 
@@ -897,43 +905,196 @@ export const KrozeZone: React.FC<KrozeZoneProps> = ({
           </div>
         )}
 
-        {/* Tab 3: Add Friend Form */}
+        {/* Tab 3: Friends & Network Hub */}
         {activeTab === 'friends' && (
-          <div className="max-w-xl mx-auto p-6 rounded-3xl bg-slate-900/90 border border-indigo-500/30 space-y-4 shadow-xl">
-            <h3 className="text-lg font-black text-white flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-indigo-400" />
-              Add Friend by 10-Digit Code
-            </h3>
-            <p className="text-xs text-slate-300">
-              Enter your friend's 10-digit number (e.g. 8492019384) to add them to your Kroze Zone friend list!
-            </p>
+          <div className="max-w-4xl mx-auto space-y-6">
+            {/* Connect by Code / Username */}
+            <div className="p-6 rounded-3xl bg-slate-900/90 border border-indigo-500/30 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-indigo-400" />
+                  Connect by 10-Digit Code or Username
+                </h3>
+                <span className="text-[10px] font-mono px-2.5 py-1 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  SERVER SYNCED
+                </span>
+              </div>
+              <p className="text-xs text-slate-300">
+                Enter your friend's 10-digit Kroze code (e.g. {formattedCode}) or their username to create a permanent, cross-device connection.
+              </p>
 
-            <input
-              type="text"
-              placeholder="10-digit friend code..."
-              value={friendCodeInput}
-              onChange={(e) => setFriendCodeInput(e.target.value)}
-              className="w-full px-4 py-3 rounded-2xl bg-black/60 border border-indigo-500/40 text-white font-mono font-bold text-sm focus:outline-none focus:border-indigo-400"
-            />
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  placeholder="Enter 10-digit code or username..."
+                  value={friendCodeInput}
+                  onChange={(e) => setFriendCodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddFriend();
+                  }}
+                  className="flex-1 px-4 py-3 rounded-2xl bg-black/60 border border-indigo-500/40 text-white font-mono font-bold text-sm focus:outline-none focus:border-indigo-400"
+                />
 
-            <button
-              onClick={handleAddFriend}
-              className="w-full py-3 rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer"
-            >
-              Add Friend
-            </button>
+                <button
+                  onClick={() => handleAddFriend()}
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-black text-xs uppercase tracking-wider shadow-lg cursor-pointer flex items-center justify-center gap-2 shrink-0 transition-transform active:scale-95"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Connect Friend</span>
+                </button>
+              </div>
 
-            {addFriendStatus && (
-              <div
-                className={`p-3 rounded-xl text-xs font-bold text-center ${
-                  addFriendStatus.success
-                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
-                    : 'bg-rose-950/80 text-rose-300 border border-rose-500/30'
-                }`}
-              >
-                {addFriendStatus.text}
+              {addFriendStatus && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-bold text-center transition-all ${
+                    addFriendStatus.success
+                      ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-rose-950/80 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {addFriendStatus.text}
+                </div>
+              )}
+            </div>
+
+            {/* Quick Connect Other Platform Accounts */}
+            {allUsers.filter((u) => u.id !== user.id && !friendsList.some((f) => f.id === u.id)).length > 0 && (
+              <div className="p-6 rounded-3xl bg-slate-900/80 border border-purple-500/30 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-purple-300 font-bold">
+                    <Globe className="w-5 h-5 text-purple-400" />
+                    <h3 className="text-base font-black text-white">Discover Kroze Network Players</h3>
+                  </div>
+                  <span className="text-xs text-purple-300/80 font-mono">1-Click Connect</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {allUsers
+                    .filter((u) => u.id !== user.id && !friendsList.some((f) => f.id === u.id))
+                    .map((otherUser) => (
+                      <div
+                        key={otherUser.id}
+                        className="p-3.5 rounded-2xl bg-black/40 border border-purple-500/20 flex items-center justify-between hover:border-purple-400/50 transition-all"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-purple-600/30 border border-purple-400/40 flex items-center justify-center font-black text-purple-200 shrink-0">
+                            {otherUser.username.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs text-white truncate">{otherUser.username}</div>
+                            <div className="font-mono text-[9px] text-purple-300/70 truncate">
+                              {formatFriendCode(getDeterministicFriendCode(otherUser.id))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleAddFriend(otherUser)}
+                          className="px-3 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/40 text-purple-200 border border-purple-400/40 text-[11px] font-bold cursor-pointer shrink-0 flex items-center gap-1 transition-all active:scale-95"
+                        >
+                          <UserPlus className="w-3 h-3" />
+                          <span>Add</span>
+                        </button>
+                      </div>
+                    ))}
+                </div>
               </div>
             )}
+
+            {/* Current Connected Friends List */}
+            <div className="p-6 rounded-3xl bg-slate-900/90 border border-white/10 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-lg font-black text-white">Your Connected Friends ({friendsList.length})</h3>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Server Connected</span>
+                </div>
+              </div>
+
+              {friendsList.length === 0 ? (
+                <div className="text-center py-10 rounded-2xl bg-black/30 border border-dashed border-white/10 space-y-2">
+                  <Users className="w-8 h-8 text-slate-500 mx-auto" />
+                  <p className="text-slate-400 text-xs font-bold">No friends connected yet.</p>
+                  <p className="text-slate-500 text-[11px]">
+                    Enter a 10-digit friend code or username above, or share your code {formattedCode}!
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {friendsList.map((f) => (
+                    <div
+                      key={f.id}
+                      className="p-4 rounded-2xl bg-black/50 border border-indigo-500/20 hover:border-indigo-400/50 flex items-center justify-between gap-3 transition-all"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative">
+                          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-purple-500/30 border border-indigo-400/40 flex items-center justify-center font-black text-base text-indigo-200 shrink-0">
+                            {f.username.charAt(0).toUpperCase()}
+                          </div>
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${
+                              f.online ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                            }`}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm text-white flex items-center gap-1.5">
+                            <span className="truncate">{f.username}</span>
+                            <span
+                              className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono uppercase font-black ${
+                                f.online
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-slate-700/50 text-slate-400'
+                              }`}
+                            >
+                              {f.online ? (f.status === 'in_call' ? 'In Call' : 'Online') : 'Offline'}
+                            </span>
+                          </div>
+                          <span className="font-mono text-xs text-amber-300/90 font-bold block">
+                            {formatFriendCode(f.friendCode)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => {
+                            setSelectedFriend(f);
+                            setActiveTab('chat');
+                          }}
+                          className="p-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 border border-purple-400/30 text-xs font-bold cursor-pointer transition-all active:scale-95"
+                          title="Open Chat"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setSelectedFriend(f);
+                            setActiveTab('gift');
+                          }}
+                          className="p-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border border-amber-400/30 text-xs font-bold cursor-pointer transition-all active:scale-95"
+                          title="Gift Krests"
+                        >
+                          <Gift className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => handleUnfriend(f.id)}
+                          className="p-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 border border-rose-400/30 text-xs font-bold cursor-pointer transition-all active:scale-95"
+                          title="Remove Friend"
+                        >
+                          <UserMinus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

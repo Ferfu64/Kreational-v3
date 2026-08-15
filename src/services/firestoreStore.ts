@@ -287,6 +287,14 @@ export function applyDatastoreSnapshot(snapshotStr: string | undefined): boolean
 export async function saveFullUserAccountToFirestore(updatedUser: User): Promise<User> {
   const secretWord = updatedUser.secretWord || '';
   const cleanUser: User = JSON.parse(JSON.stringify(updatedUser));
+
+  // Harmonize friends and notifiedApprovals
+  const unifiedFriends = Array.from(
+    new Set([...(cleanUser.friends || []), ...(cleanUser.notifiedApprovals || [])])
+  );
+  cleanUser.friends = unifiedFriends;
+  cleanUser.notifiedApprovals = unifiedFriends;
+
   const accountRecord: UserAccountRecord = {
     user: cleanUser,
     secretWord,

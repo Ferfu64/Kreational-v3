@@ -30,7 +30,7 @@ class GamesModule {
       this.gamesMap.set(game.id, game);
     });
 
-    // Remove legacy duplicates if present
+    // Remove legacy duplicates or unrequested tiers if present
     this.gamesMap.delete('bronze_07');
     this.gamesMap.delete('silver_01');
 
@@ -40,7 +40,12 @@ class GamesModule {
       if (storedRaw) {
         const storedGames: Game[] = JSON.parse(storedRaw);
         storedGames.forEach((game) => {
-          if (game.id !== 'bronze_07' && game.id !== 'silver_01') {
+          if (
+            game.id !== 'bronze_07' &&
+            game.id !== 'silver_01' &&
+            game.tier !== ('pro' as any) &&
+            game.tier !== ('azgames' as any)
+          ) {
             this.gamesMap.set(game.id, game);
           }
         });

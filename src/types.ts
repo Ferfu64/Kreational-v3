@@ -98,6 +98,7 @@ export interface User {
     voiceVolume?: number;
   };
   notifiedApprovals?: string[];
+  friends?: string[];
 }
 
 export interface BidRecord {

@@ -309,6 +309,10 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     ),
   };
 
+  const normalizedFriends = Array.from(
+    new Set([...(user.friends || []), ...(user.notifiedApprovals || [])])
+  );
+
   const updatedUser: User = {
     ...user,
     krests,
@@ -319,6 +323,8 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     dailyStreak,
     lastLoginDate,
     cosmetics,
+    friends: normalizedFriends,
+    notifiedApprovals: normalizedFriends,
   };
 
   return { updatedUser, bonusKrestsGranted };

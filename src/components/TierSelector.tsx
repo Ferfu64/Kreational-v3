@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { Tier, TierId } from '../types';
 import { Lock, Check, Sparkles, Key } from 'lucide-react';
 import { SFX } from '../utils/sfx';
@@ -136,16 +137,21 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
 
       {/* Grid / Horizontal Row of Tiers */}
       <div className="flex sm:grid overflow-x-auto sm:grid-cols-4 lg:grid-cols-9 gap-2 sm:gap-2.5 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        {visibleTiers.map((tier) => {
+        {visibleTiers.map((tier, idx) => {
           const isSelected = selectedTierId === tier.id;
           const isUnlocked = isAdmin || userPurchasedTiers.includes(tier.id);
           const theme = TIER_THEMES[tier.id] || TIER_THEMES.bronze;
           const isAZGames = tier.id === 'azgames' || tier.name === 'AZGAMES';
 
           return (
-            <div
+            <motion.div
               id={`tier-card-${tier.id}`}
               key={tier.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.03, duration: 0.25 }}
+              whileHover={{ scale: 1.03, y: -2 }}
+              whileTap={{ scale: 0.98 }}
               role="button"
               tabIndex={0}
               onClick={() => {
@@ -163,8 +169,8 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
                 isAZGames ? 'glitch-card bg-red-950/40 border-red-600/80 shadow-red-900/50' : ''
               } ${
                 isSelected
-                  ? `bg-white/[0.08] ${theme.border} ring-2 ${theme.activeRing} ring-offset-2 ring-offset-[#050505] scale-[1.02] ${theme.glow} shadow-xl`
-                  : 'bg-white/[0.025] border-white/10 hover:bg-white/[0.06] hover:border-white/20 hover:scale-[1.01] opacity-85 hover:opacity-100'
+                  ? `bg-white/[0.08] ${theme.border} ring-2 ${theme.activeRing} ring-offset-2 ring-offset-[#050505] ${theme.glow} shadow-xl`
+                  : 'bg-white/[0.025] border-white/10 hover:bg-white/[0.06] hover:border-white/20 opacity-85 hover:opacity-100'
               }`}
             >
               <div className="w-full flex items-center justify-between mb-1.5">
@@ -224,7 +230,7 @@ export const TierSelector: React.FC<TierSelectorProps> = ({
                   </button>
                 )}
               </div>
-            </div>
+            </motion.div>
           );
         })}
       </div>

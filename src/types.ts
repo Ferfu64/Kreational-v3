@@ -171,6 +171,19 @@ export interface GameRequest {
   durationSeconds?: number;
 }
 
+export interface AccountCreationRequest {
+  id: string;
+  preferredUsername: string;
+  preferredSecretWord: string;
+  status: 'pending' | 'accepted' | 'denied';
+  createdAt: number;
+  resolvedAt?: number | null;
+  note?: string;
+  reviewerNotes?: string;
+  grantedTiers?: TierId[];
+  initialKrests?: number;
+}
+
 export interface AuthState {
   user: User | null;
   token: string | null;

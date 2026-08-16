@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { User } from '../types';
-import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell, Package, Phone } from 'lucide-react';
+import { LogOut, Shield, Users, Clock, Gamepad2, Inbox, ChevronLeft, ChevronRight, Settings, WifiOff, Sparkles, ShoppingBag, Flame, Store, Bell, Package, Phone, Heart } from 'lucide-react';
 import { SFX } from '../utils/sfx';
 import kreationsLogo from '../assets/images/kreations_sleek_logo_1785626924672.jpg';
 
@@ -17,6 +17,7 @@ interface NavbarProps {
   onOpenKreatorFun?: () => void;
   onOpenAZChallenges?: () => void;
   onOpenKrozeZone?: () => void;
+  onOpenFavorites?: () => void;
   onLogout: () => void;
   pendingRequestsCount?: number;
   unreadNotificationsCount?: number;
@@ -36,6 +37,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenKreatorFun,
   onOpenAZChallenges,
   onOpenKrozeZone,
+  onOpenFavorites,
   onLogout,
   pendingRequestsCount = 0,
   unreadNotificationsCount = 0,
@@ -112,6 +114,29 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <Gamepad2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
                 <span>Game Library</span>
+              </button>
+
+              {/* Favorite Games Vault Button */}
+              <button
+                id="nav-favorites-button"
+                onClick={() => {
+                  SFX.playClick();
+                  if (onOpenFavorites) {
+                    onOpenFavorites();
+                  } else {
+                    window.history.pushState({}, '', '/favorites');
+                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  }
+                }}
+                className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl text-xs font-black text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center gap-1.5 sm:gap-2 transition-all cursor-pointer shrink-0 shadow-sm"
+              >
+                <Heart className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                <span>Favorites</span>
+                {user.favoriteGames && user.favoriteGames.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-rose-500/30 text-[10px] font-mono text-rose-200">
+                    {user.favoriteGames.length}
+                  </span>
+                )}
               </button>
 
               {/* Marketplace Stand Hub Button */}

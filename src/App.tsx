@@ -54,6 +54,7 @@ import { AZGamesChallengesModal } from './components/AZGamesChallengesModal';
 import { KreatorFunPanel } from './components/KreatorFunPanel';
 import { KrozeZone } from './components/KrozeZone';
 import { CallsHub } from './components/CallsHub';
+import { FavoriteGamesPage } from './components/FavoriteGamesPage';
 import { GlobalCallAndMessageManager } from './components/GlobalCallAndMessageManager';
 import { NotificationToastContainer } from './components/NotificationToastContainer';
 import { NotificationDrawer } from './components/NotificationDrawer';
@@ -187,12 +188,14 @@ export default function App() {
   const [isAZChallengesOpen, setIsAZChallengesOpen] = useState(false);
   const [isKrozePage, setIsKrozePage] = useState(() => window.location.pathname.toLowerCase().startsWith('/kroze'));
   const [isCallsPage, setIsCallsPage] = useState(() => window.location.pathname.toLowerCase().startsWith('/calls'));
+  const [isFavoritesPage, setIsFavoritesPage] = useState(() => window.location.pathname.toLowerCase().startsWith('/favorites'));
 
   useEffect(() => {
     const handleLocationCheck = () => {
       const path = window.location.pathname.toLowerCase();
       setIsKrozePage(path.startsWith('/kroze'));
       setIsCallsPage(path.startsWith('/calls'));
+      setIsFavoritesPage(path.startsWith('/favorites'));
     };
     window.addEventListener('popstate', handleLocationCheck);
     return () => window.removeEventListener('popstate', handleLocationCheck);
@@ -349,6 +352,43 @@ export default function App() {
     saveFullUserAccountToFirestore(updated).catch(() => {});
   };
 
+  // Real-time Firestore sync for logged-in user data & Krests
+  useEffect(() => {
+    if (!user?.id) return;
+    const unsubscribe = subscribeToUserDoc(user.id, (freshUser) => {
+      if (freshUser) {
+        setUser((prev) => {
+          if (!prev) return freshUser;
+          return {
+            ...prev,
+            ...freshUser,
+            krests: typeof freshUser.krests === 'number' ? freshUser.krests : prev.krests,
+          };
+        });
+        safeSet('kreational_user', JSON.stringify(freshUser));
+        safeSet('kreational_current_user', JSON.stringify(freshUser));
+      }
+    });
+    return () => unsubscribe();
+  }, [user?.id]);
+
+  // Synchronize on local user_updated window events
+  useEffect(() => {
+    const handleUserUpdated = () => {
+      const stored = safeGet('kreational_user');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed && user?.id === parsed.id) {
+            setUser((prev) => (prev ? { ...prev, ...parsed } : parsed));
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('user_updated', handleUserUpdated);
+    return () => window.removeEventListener('user_updated', handleUserUpdated);
+  }, [user?.id]);
+
   // Auto-backup datastore on beforeunload
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -454,6 +494,15 @@ export default function App() {
     safeSet('kreational_current_user', JSON.stringify(updatedUser));
     safeSet('kreational_token', newToken);
     saveFullUserAccountToFirestore(updatedUser).catch(() => {});
+
+    // If the user has favorite games on their account, pop up the favorites page immediately
+    const userFavs = updatedUser.favoriteGames || [];
+    if (userFavs.length > 0) {
+      window.history.pushState({}, '', '/favorites');
+      setIsFavoritesPage(true);
+      setIsKrozePage(false);
+      setIsCallsPage(false);
+    }
   };
 
   // Global "Override" typing bypass listener when not focused in an input box
@@ -709,11 +758,13 @@ export default function App() {
             window.history.pushState({}, '', '/kroze');
             setIsKrozePage(true);
             setIsCallsPage(false);
+            setIsFavoritesPage(false);
           }}
           onReturnToGames={() => {
             window.history.pushState({}, '', '/');
             setIsCallsPage(false);
             setIsKrozePage(false);
+            setIsFavoritesPage(false);
             setActiveTab('games');
           }}
         />
@@ -725,8 +776,24 @@ export default function App() {
             window.history.pushState({}, '', '/');
             setIsKrozePage(false);
             setIsCallsPage(false);
+            setIsFavoritesPage(false);
           }}
           onOpenAZChallenges={() => setIsAZChallengesOpen(true)}
+        />
+      ) : isFavoritesPage ? (
+        <FavoriteGamesPage
+          user={user}
+          games={games}
+          tiers={tiers}
+          onReturnToKreational={() => {
+            window.history.pushState({}, '', '/');
+            setIsFavoritesPage(false);
+            setIsKrozePage(false);
+            setIsCallsPage(false);
+            setActiveTab('games');
+          }}
+          onUpdateUser={handleUpdateUser}
+          serverTimeOffset={serverTimeOffset}
         />
       ) : (
         <div id="app-root" className={`min-h-screen ${user && !playingGame ? 'bg-transparent' : 'bg-[#050505]'} text-slate-100 flex flex-col font-sans relative overflow-x-hidden selection:bg-purple-500/30 selection:text-purple-200`}>
@@ -755,6 +822,13 @@ export default function App() {
               onOpenKrozeZone={() => {
                 window.history.pushState({}, '', '/kroze');
                 setIsKrozePage(true);
+                setIsFavoritesPage(false);
+              }}
+              onOpenFavorites={() => {
+                window.history.pushState({}, '', '/favorites');
+                setIsFavoritesPage(true);
+                setIsKrozePage(false);
+                setIsCallsPage(false);
               }}
               onLogout={handleLogout}
               pendingRequestsCount={pendingRequestsCount}

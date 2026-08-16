@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Game, Tier, User } from '../types';
 import { safeGet, safeSet } from '../utils/persistentStorage';
 import { saveFullUserAccountToFirestore } from '../services/firestoreStore';
@@ -251,7 +252,7 @@ export const GameGrid: React.FC<GameGridProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {displayedGames.map((game) => {
+          {displayedGames.map((game, idx) => {
             // Check temporary access for game or tier
             const tempAccess = (user.temporaryAccess || []).find(
               (ta) => (ta.gameId && ta.gameId === game.id) || (ta.tierId && ta.tierId === game.tier)
@@ -273,9 +274,14 @@ export const GameGrid: React.FC<GameGridProps> = ({
             const gameTierTheme = TIER_THEMES[game.tier] || TIER_THEMES.bronze;
 
             return (
-              <div
+              <motion.div
                 id={`game-card-${game.id}`}
                 key={game.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, delay: Math.min(idx * 0.02, 0.3) }}
+                whileHover={canPlay ? { scale: 1.02, y: -2 } : {}}
+                whileTap={canPlay ? { scale: 0.99 } : {}}
                 onClick={() => {
                   if (canPlay) {
                     onPlayGame(game);
@@ -317,7 +323,8 @@ export const GameGrid: React.FC<GameGridProps> = ({
 
                 {/* Right Action buttons */}
                 <div className="shrink-0 flex items-center gap-1.5">
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.8 }}
                     onClick={(e) => toggleFavorite(game.id, e)}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       isFav
@@ -327,7 +334,7 @@ export const GameGrid: React.FC<GameGridProps> = ({
                     title={isFav ? 'Remove Favorite' : 'Save Favorite in LocalStorage'}
                   >
                     <Heart className={`w-4 h-4 ${isFav ? 'fill-current' : ''}`} />
-                  </button>
+                  </motion.button>
 
                   {canPlay ? (
                     <span className="px-3 py-1.5 rounded-xl bg-purple-500/20 text-purple-200 border border-purple-500/30 group-hover:bg-purple-600 group-hover:text-white group-hover:border-purple-400 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md">
@@ -348,7 +355,7 @@ export const GameGrid: React.FC<GameGridProps> = ({
                     </button>
                   )}
                 </div>
-              </div>
+              </motion.div>
             );
           })}
         </div>

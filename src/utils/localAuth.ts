@@ -1,4 +1,5 @@
 import { User, TierId } from '../types';
+import { safeGet, safeSet } from './persistentStorage';
 
 export const KREATOR_ADMIN_USER: User = {
   id: 'kreator-admin-id',
@@ -17,16 +18,32 @@ export interface LocalAccountRecord {
   secretWord: string;
 }
 
+const LOCAL_ACCOUNTS_STORAGE_KEY = 'kreational_accounts_vault_v2';
+
 // Memory cache for runtime operations; persistent data is saved to Firestore
 const memoryAccountsCache: LocalAccountRecord[] = [];
 
 export function getLocalAccounts(): LocalAccountRecord[] {
+  if (memoryAccountsCache.length === 0) {
+    try {
+      const raw = safeGet(LOCAL_ACCOUNTS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          memoryAccountsCache.push(...parsed);
+        }
+      }
+    } catch {}
+  }
   return [...memoryAccountsCache];
 }
 
 export function saveLocalAccounts(accounts: LocalAccountRecord[]): void {
   memoryAccountsCache.length = 0;
   memoryAccountsCache.push(...accounts);
+  try {
+    safeSet(LOCAL_ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+  } catch {}
 }
 
 export function authenticateLocally(nameInput: string, wordInput: string): { user: User; token: string } | null {
@@ -34,16 +51,30 @@ export function authenticateLocally(nameInput: string, wordInput: string): { use
   const cleanNameLower = cleanName.toLowerCase();
   const cleanWordLower = wordInput.trim().toLowerCase();
 
+  const localAccounts = getLocalAccounts();
+
   // 1. Direct Kreator admin check
   if (cleanNameLower === 'kreator' && (cleanWordLower === 'override' || cleanWordLower === 'tjkqqybv')) {
+    const existingKreator = localAccounts.find(
+      (a) => a.user.id === KREATOR_ADMIN_USER.id || a.user.username.toLowerCase() === 'kreator'
+    );
+    if (existingKreator) {
+      const u = {
+        ...existingKreator.user,
+        secretWord: existingKreator.secretWord || existingKreator.user.secretWord || 'Override',
+      };
+      return {
+        user: u,
+        token: `token-kreator-${Date.now()}`,
+      };
+    }
     return {
       user: KREATOR_ADMIN_USER,
       token: `token-kreator-${Date.now()}`,
     };
   }
 
-  // 2. Memory cache check
-  const localAccounts = getLocalAccounts();
+  // 2. Memory/local cache check
   const found = localAccounts.find((acc) => {
     const uNameMatch = acc.user.username.toLowerCase() === cleanNameLower;
     const wordMatch = (acc.secretWord && acc.secretWord.toLowerCase() === cleanWordLower) ||

@@ -239,9 +239,16 @@ export function applyStreakReward(user: User, day: number): StreakRewardResult {
 }
 
 export function normalizeUserWithProfile(user: User): { updatedUser: User; bonusKrestsGranted: number } {
-  let krests = typeof user.krests === 'number' && !isNaN(user.krests)
-    ? user.krests
-    : (user.role === 'admin' ? 250 : 50);
+  let krests = 0;
+  if (typeof user.krests === 'number' && !isNaN(user.krests)) {
+    krests = user.krests;
+  } else if (typeof user.krests === 'string' && !isNaN(Number(user.krests))) {
+    krests = Number(user.krests);
+  } else if (user.role === 'admin' || user.username === 'Kreator') {
+    krests = 250;
+  } else {
+    krests = 50;
+  }
   let reservedKrests = user.reservedKrests !== undefined ? user.reservedKrests : 0;
   let iconShards = user.iconShards !== undefined ? user.iconShards : (user.role === 'admin' ? 10 : 0);
   let dailyStreak = user.dailyStreak || 1;
@@ -313,6 +320,19 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     new Set([...(user.friends || []), ...(user.notifiedApprovals || [])])
   );
 
+  const localFavorites = (() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('kreational_favorites') : null;
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const normalizedFavorites = Array.from(
+    new Set([...(user.favoriteGames || []), ...localFavorites])
+  );
+
   const updatedUser: User = {
     ...user,
     krests,
@@ -325,6 +345,7 @@ export function normalizeUserWithProfile(user: User): { updatedUser: User; bonus
     cosmetics,
     friends: normalizedFriends,
     notifiedApprovals: normalizedFriends,
+    favoriteGames: normalizedFavorites,
   };
 
   return { updatedUser, bonusKrestsGranted };
